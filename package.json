@@ -15,5 +15,6 @@
   },
   "dependencies": {
     "playwright-core": "^1.49.0"
-  }
+  },
+  "author": "JacyFleisie <jacyreyneke3@gmail.com>"
 }

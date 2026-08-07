@@ -1,5 +1,7 @@
 # myAIE Lecture Downloader
 
+**Built by [JacyFleisie](https://github.com/JacyFleisie)** — a student project automating my own lecture-recordings backlog.
+
 Automates the **myAIE Student Portal** (`https://student.myaie.ac`): it scans your
 calendar schedule, finds past live lecture recordings within a date range you
 choose, and downloads them as MP4 files — using your own logged-in Chrome
