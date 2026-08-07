@@ -24,7 +24,9 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
+import { chromium, type Browser, type BrowserContext, type Cookie, type Page } from 'playwright-core';
+
+type LaunchCtxOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>;
 
 // ---------------------------------------------------------------------------
 // Types (derived from the portal's real JSON responses)
@@ -34,6 +36,22 @@ export type Logger = (level: LogLevel, message: string) => void;
 
 /** A class session as returned by the portal's class feed. */
 export interface ClassSession {
+  class_id?: string | number;
+  id?: string | number;
+  class_title?: string;
+  subjectName?: string;
+  class_date?: string | number;
+  startDateTime?: string;
+  IsRecorded?: number | boolean | string;
+  is_recorded?: number | boolean | string;
+  isRecorded?: number | boolean | string;
+  DownloadAvailable?: number | boolean | string | null;
+  isRecordingAvailable?: number | boolean | string | null;
+  downloadURL?: string | null;
+  downloadUrl?: string | null;
+  recordingURL?: string | null;
+  recordingUrl?: string | null;
+  recordings?: string | null;
   [key: string]: unknown;
 }
 
@@ -308,7 +326,7 @@ export function buildConfig(parts: ConfigParts, baseDir: string = process.cwd())
 // Browser launch (persistent profile => login persists between runs)
 // ---------------------------------------------------------------------------
 async function launchBrowser(cfg: RunConfig): Promise<{ context: BrowserContext; browser: Browser | null }> {
-  const options: Record<string, unknown> = {
+  const options: LaunchCtxOptions = {
     channel: cfg.channel,
     headless: cfg.headless,
     acceptDownloads: true,
@@ -325,7 +343,7 @@ async function launchBrowser(cfg: RunConfig): Promise<{ context: BrowserContext;
 
   let context: BrowserContext;
   try {
-    context = await chromium.launchPersistentContext(cfg.profile, options as never);
+    context = await chromium.launchPersistentContext(cfg.profile, options);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const hint =
@@ -548,8 +566,8 @@ async function writeNetscapeCookies(context: BrowserContext, url: string): Promi
       try { if (Date.now() - fs.statSync(fp).mtimeMs > 6 * 3600 * 1000) fs.unlinkSync(fp); } catch { /* busy or gone */ }
     }
   } catch { /* temp dir unreadable */ }
-  let cookies: { domain: string; path?: string; secure?: boolean; expires: number; name: string; value: string }[] = [];
-  try { cookies = await context.cookies(url) as never; } catch { /* ignore */ }
+  let cookies: Cookie[] = [];
+  try { cookies = await context.cookies(url); } catch { /* ignore */ }
   if (!cookies.length) return null;
   const lines = ['# Netscape HTTP Cookie File'];
   for (const c of cookies) {

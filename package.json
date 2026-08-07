@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.18.0"
   },
   "dependencies": {
     "playwright-core": "^1.49.0"

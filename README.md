@@ -40,12 +40,12 @@ Already-downloaded files are skipped on reruns.
 
 ## Requirements
 
-- **Node.js 18+** (Node 24 works)
+- **Node.js 22.18+** (Node 24 works)
 - **Google Chrome** installed (or Microsoft Edge — pick it in the GUI / use
   `--channel edge`)
 
 No extra browser download is needed — the bot drives your installed Chrome.
-For the desktop app you also need Node 18+ (`npm install` once, then
+For the desktop app you also need Node 22.18+ (`npm install` once, then
 `npm run desktop`).
 
 ## Install

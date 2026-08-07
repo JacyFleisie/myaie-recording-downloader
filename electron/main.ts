@@ -8,7 +8,7 @@
  *   npm run desktop          launch the app
  *   npm run desktop:smoke    headless self-check (starts server, hits /api/status, exits)
  */
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import { startServer } from '../gui-server.ts';
 
 type ServerHandle = Awaited<ReturnType<typeof startServer>>;
@@ -59,9 +59,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    if (process.argv.includes('--smoke')) {
-      // Headless self-check for CI / local validation.
-      try {
+    try {
+      if (process.argv.includes('--smoke')) {
+        // Headless self-check for CI / local validation.
         const h = await startEmbeddedServer();
         const res = await fetch(h.url + 'api/status');
         const body = (await res.json()) as { state: string };
@@ -69,14 +69,16 @@ if (!gotLock) {
         await h.close();
         serverHandle = null;
         app.exit(0);
-      } catch (e) {
-        console.error('SMOKE FAIL', e instanceof Error ? e.message : String(e));
-        app.exit(1);
+        return;
       }
-      return;
+      await startEmbeddedServer();
+      createWindow();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Failed to start:', msg);
+      dialog.showErrorBox('myAIE Lecture Downloader', 'Could not start the dashboard server:\n' + msg);
+      app.quit();
     }
-    await startEmbeddedServer();
-    createWindow();
   });
 
   app.on('window-all-closed', () => {
