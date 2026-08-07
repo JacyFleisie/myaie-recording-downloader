@@ -38,9 +38,7 @@
       "gui-server.ts",
       "myaie-bot.ts",
       "yt-dlp.exe",
-      "package.json",
-      "tsconfig.json",
-      "node_modules/**/*"
+      "package.json"
     ],
     "asarUnpack": [
       "yt-dlp.exe"

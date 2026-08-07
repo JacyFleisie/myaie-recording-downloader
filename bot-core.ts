@@ -543,6 +543,10 @@ const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 async function resolveYtDlp(cfg: RunConfig): Promise<string> {
   const candidates: string[] = [];
   if (cfg.ytDlpPath) candidates.push(cfg.ytDlpPath);
+  // Packaged Electron app: yt-dlp.exe lives in app.asar.unpacked (exec can't
+  // run from inside the asar archive, so electron-builder unpacks it).
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (resourcesPath) candidates.push(path.join(resourcesPath, 'app.asar.unpacked', 'yt-dlp.exe'));
   candidates.push(path.join(CORE_DIR, 'yt-dlp.exe'), path.join(CORE_DIR, 'yt-dlp'));
   for (const c of candidates) {
     try { if (fs.statSync(c).isFile()) return c; } catch { /* not there */ }
