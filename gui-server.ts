@@ -22,7 +22,7 @@ import { exec } from 'node:child_process';
 import { connect as netConnect } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { buildConfig, dateStr, runBot, type Summary } from './bot-core.ts';
+import { buildConfig, dateStr, downloadFiles, runBot, scanNewsRoomWithLogin, type FeedFile, type FileSummary, type Summary } from './bot-core.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -45,6 +45,7 @@ interface RunBody {
   channel?: string; executablePath?: string; apiBase?: string; loginTimeout?: string;
   dryRun?: boolean; inspect?: boolean; headless?: boolean; noAudit?: boolean;
   fallbackRecording?: boolean; ytdlp?: boolean;
+  scanOnly?: boolean; onlyIds?: string[]; fileIds?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,7 @@ let settings: Settings = loadSettings();
 let state = 'idle'; // idle | running | done | error
 let cancelFlag = false;
 let statusText = 'Ready';
+let scannedFiles: FeedFile[] = []; // last news-room file scan (for download-files)
 
 const clients = new Set<ServerResponse>();   // SSE responses
 const eventHistory: Array<Record<string, unknown>> = []; // recent events for late-joining clients
@@ -115,7 +117,9 @@ function broadcast(type: string, payload: Record<string, unknown> = {}): void {
 // ---------------------------------------------------------------------------
 // Run lifecycle
 // ---------------------------------------------------------------------------
-function startRun(body: RunBody): { ok: boolean; error?: string } {
+type RunAction = 'recordings' | 'recordings-scan' | 'files-scan' | 'files-download';
+
+function startRun(body: RunBody, action: RunAction = 'recordings'): { ok: boolean; error?: string } {
   if (state === 'running') {
     return { ok: false, error: 'A run is already in progress.' };
   }
@@ -137,6 +141,8 @@ function startRun(body: RunBody): { ok: boolean; error?: string } {
       noAudit: body.noAudit,
       fallbackRecording: body.fallbackRecording,
       ytdlp: !!body.ytdlp,
+      scanOnly: action === 'recordings-scan',
+      selection: body.onlyIds,
     }, __dirname);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -163,28 +169,51 @@ function startRun(body: RunBody): { ok: boolean; error?: string } {
   state = 'running';
   statusText = 'Running…';
   broadcast('status', { state, statusText, settings });
-  broadcast('run_started', { settings });
-  appendRunLog(`run started: ${dateStr(cfg.from)} → ${dateStr(cfg.to)}${cfg.dryRun ? ' (dry-run)' : ''}`);
+  broadcast('run_started', { settings, kind: action });
+  const label = action === 'files-scan' ? 'news-room file scan'
+    : action === 'files-download' ? 'news-room file download'
+    : action === 'recordings-scan' ? 'recording scan' : 'recording download';
+  appendRunLog(`run started (${label}): ${dateStr(cfg.from)} → ${dateStr(cfg.to)}${cfg.dryRun ? ' (dry-run)' : ''}`);
 
   void (async () => {
     try {
-      const summary: Summary = await runBot(cfg, {
-        log: (level, message) => {
-          broadcast('log', { level, message });
-          appendRunLog(`${level}: ${message}`);
-        },
-        stage: (stage) => {
-          statusText = stage;
-          broadcast('stage', { stage });
-        },
-        schedule: (rows) => broadcast('schedule', { rows }),
-        item: (item) => broadcast('item', { item }),
-        isCancelled: () => cancelFlag,
-      });
+      let finished: { summary?: Summary; filesSummary?: FileSummary; filesCount?: number; cancelled?: boolean } = {};
+      if (action === 'files-scan') {
+        const files = await scanNewsRoomWithLogin(cfg, {
+          log: (level, message) => { broadcast('log', { level, message }); appendRunLog(`${level}: ${message}`); },
+          stage: (stage) => { statusText = stage; broadcast('stage', { stage }); },
+          isCancelled: () => cancelFlag,
+        });
+        scannedFiles = files;
+        broadcast('files', { files });
+        finished = { filesCount: files.length, cancelled: cancelFlag };
+      } else if (action === 'files-download') {
+        const wanted = new Set(body.fileIds || []);
+        const files = scannedFiles.filter((f) => wanted.has(f.id));
+        if (files.length === 0) {
+          throw new Error('No files selected — click "Find news room files" first, then tick the files you want.');
+        }
+        const filesSummary = await downloadFiles(cfg, files, {
+          log: (level, message) => { broadcast('log', { level, message }); appendRunLog(`${level}: ${message}`); },
+          stage: (stage) => { statusText = stage; broadcast('stage', { stage }); },
+          fileItem: (item) => broadcast('file_item', { item }),
+          isCancelled: () => cancelFlag,
+        });
+        finished = { filesSummary, cancelled: filesSummary.cancelled };
+      } else {
+        const summary: Summary = await runBot(cfg, {
+          log: (level, message) => { broadcast('log', { level, message }); appendRunLog(`${level}: ${message}`); },
+          stage: (stage) => { statusText = stage; broadcast('stage', { stage }); },
+          schedule: (rows) => broadcast('schedule', { rows }),
+          item: (item) => broadcast('item', { item }),
+          isCancelled: () => cancelFlag,
+        });
+        finished = { summary, cancelled: summary.cancelled };
+      }
       state = 'done';
-      statusText = summary.cancelled ? 'Cancelled' : 'Finished';
-      broadcast('run_finished', { summary, cancelled: summary.cancelled });
-      appendRunLog(`run finished: ${JSON.stringify(summary)}`);
+      statusText = finished.cancelled ? 'Cancelled' : 'Finished';
+      broadcast('run_finished', finished);
+      appendRunLog(`run finished (${label}): ${JSON.stringify(finished)}`);
     } catch (e) {
       state = 'error';
       statusText = 'Error';
@@ -316,7 +345,19 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
   if (req.method === 'POST') {
     const body = await readBody(req);
     if (p === '/api/run') {
-      const result = startRun(body);
+      const result = startRun(body, body.scanOnly ? 'recordings-scan' : 'recordings');
+      if (result.ok) sendJson(res, 200, { ok: true });
+      else sendJson(res, 409, { ok: false, error: result.error });
+      return;
+    }
+    if (p === '/api/scan-files') {
+      const result = startRun(body, 'files-scan');
+      if (result.ok) sendJson(res, 200, { ok: true });
+      else sendJson(res, 409, { ok: false, error: result.error });
+      return;
+    }
+    if (p === '/api/run-files') {
+      const result = startRun(body, 'files-download');
       if (result.ok) sendJson(res, 200, { ok: true });
       else sendJson(res, 409, { ok: false, error: result.error });
       return;

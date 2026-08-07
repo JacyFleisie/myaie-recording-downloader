@@ -43,8 +43,9 @@
       </div>
       <ol class="hint-steps">
         <li><b>Pick a date range</b> — the recordings window you care about.</li>
-        <li><b>Choose a download folder</b> — where the videos land.</li>
-        <li><b>Hit Start</b> — log in once in the Chrome window that opens; the bot handles the rest.</li>
+        <li><b>Find recordings</b> — the bot lists everything it detects with a Download button.</li>
+        <li><b>Tick the ones you want</b> (or select all) and hit <b>Download selected</b>.</li>
+        <li><b>News room files</b> — <b>Find news room files</b> lists attachments (PDF/PPTX/DOCX); tick and download the same way.</li>
       </ol>
     </section>
 
@@ -102,7 +103,10 @@
       </div>
 
       <div class="actions">
-        <button id="runBtn" class="btn btn-primary" type="button" aria-label="Start download"><span class="icon">&#9654;</span> Start download</button>
+        <button id="scanBtn" class="btn btn-primary" type="button" aria-label="Find recordings: scan the calendar and list what is downloadable"><span class="icon">&#128269;</span> Find recordings</button>
+        <button id="dlSelBtn" class="btn btn-accent" type="button" disabled aria-label="Download the selected recordings"><span class="icon">&#11015;</span> Download selected</button>
+        <button id="scanFilesBtn" class="btn btn-ghost" type="button" aria-label="Scan the news room feeds for downloadable files"><span class="icon">&#128193;</span> Find news room files</button>
+        <button id="dlFilesBtn" class="btn btn-ghost" type="button" disabled aria-label="Download the selected news room files"><span class="icon">&#11015;</span> Download files</button>
         <button id="cancelBtn" class="btn btn-danger" type="button" disabled aria-label="Stop the current run">Stop</button>
       </div>
     </section>
@@ -139,11 +143,35 @@
         <table id="scheduleTable">
           <caption class="sr-only">Detected schedule</caption>
           <thead>
-            <tr><th scope="col">Date</th><th scope="col">Subject</th><th scope="col">Class ID</th><th scope="col">Recording</th></tr>
+            <tr>
+              <th scope="col" class="pick-col"><input type="checkbox" id="scheduleSelectAll" aria-label="Select all ready recordings"></th>
+              <th scope="col">Date</th><th scope="col">Subject</th><th scope="col">Class ID</th><th scope="col">Recording</th>
+            </tr>
           </thead>
           <tbody id="scheduleBody"></tbody>
         </table>
         <div class="empty" id="scheduleEmpty">Run the bot to see what it detects on the calendar.</div>
+      </div>
+    </section>
+
+    <section class="card table-card" id="filesCard">
+      <div class="card-head">
+        <h2>News room files</h2>
+        <span class="count" id="filesCount" aria-live="polite">not scanned yet</span>
+      </div>
+      <p class="card-note">Files attached to News Room messages (PDF / PPTX / DOCX &hellip;) in the selected date range. Tick the ones you want and hit <b>Download files</b>.</p>
+      <div class="table-wrap">
+        <table id="filesTable">
+          <caption class="sr-only">News room files</caption>
+          <thead>
+            <tr>
+              <th scope="col" class="pick-col"><input type="checkbox" id="filesSelectAll" aria-label="Select all files"></th>
+              <th scope="col">File</th><th scope="col">Subject</th><th scope="col">Size</th><th scope="col">Date</th>
+            </tr>
+          </thead>
+          <tbody id="filesBody"></tbody>
+        </table>
+        <div class="empty" id="filesEmpty">Click <b>Find news room files</b> to scan every subject&rsquo;s news room for downloadable attachments.</div>
       </div>
     </section>
 

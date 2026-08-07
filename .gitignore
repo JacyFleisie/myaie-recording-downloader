@@ -2,6 +2,7 @@ node_modules/
 downloads/
 chrome-profile/
 calendar_dump.json
+calendar_dump_feed_items.json
 *.log
 gui-settings.json
 bot-run.log

@@ -7,9 +7,13 @@ const els = {
   from: $('from'), to: $('to'), subject: $('subject'), dir: $('dir'),
   dryRun: $('dryRun'), headless: $('headless'), noAudit: $('noAudit'),
   fallbackRecording: $('fallbackRecording'), ytdlp: $('ytdlp'), max: $('max'), channel: $('channel'),
-  runBtn: $('runBtn'), cancelBtn: $('cancelBtn'), browseBtn: $('browseBtn'),
+  runBtn: $('runBtn'), scanBtn: $('scanBtn'), dlSelBtn: $('dlSelBtn'),
+  scanFilesBtn: $('scanFilesBtn'), dlFilesBtn: $('dlFilesBtn'),
+  cancelBtn: $('cancelBtn'), browseBtn: $('browseBtn'),
+  scheduleSelectAll: $('scheduleSelectAll'),
   statusPill: $('statusPill'), statusText: $('statusText'), conn: $('conn'),
   scheduleBody: $('scheduleBody'), scheduleEmpty: $('scheduleEmpty'), scheduleCount: $('scheduleCount'),
+  filesBody: $('filesBody'), filesEmpty: $('filesEmpty'), filesCount: $('filesCount'), filesSelectAll: $('filesSelectAll'),
   logBox: $('logBox'), clearLog: $('clearLog'), logFilter: $('logFilter'),
   toast: $('toast'),
   statDown: $('statDown'), statSkip: $('statSkip'), statFail: $('statFail'), statPending: $('statPending'),
@@ -18,7 +22,42 @@ const els = {
   appVersion: $('appVersion'), footerVersion: $('footerVersion'),
 };
 
-const state = { running: false, rows: new Map(), logLines: [], filter: 'all', runProgress: { done: 0, total: 0 } };
+const state = { running: false, rows: new Map(), files: new Map(), logLines: [], filter: 'all', runProgress: { done: 0, total: 0 } };
+
+function selectedClassIds() {
+  const ids = [];
+  for (const [key, entry] of state.rows) {
+    if (entry.checkbox && entry.checkbox.checked) ids.push(entry.classId);
+  }
+  return ids;
+}
+
+function selectedFileIds() {
+  const ids = [];
+  for (const [key, entry] of state.files) {
+    if (entry.checkbox && entry.checkbox.checked) ids.push(entry.id);
+  }
+  return ids;
+}
+
+function updateSelectionButtons() {
+  const c = selectedClassIds().length;
+  const f = selectedFileIds().length;
+  els.dlSelBtn.disabled = state.running || c === 0;
+  els.dlFilesBtn.disabled = state.running || f === 0;
+  els.dlSelBtn.innerHTML = '<span class="icon">&#11015;</span> Download selected' + (c ? ` (${c})` : '');
+  els.dlFilesBtn.innerHTML = '<span class="icon">&#11015;</span> Download files' + (f ? ` (${f})` : '');
+}
+
+function pickCheckbox(checked, enabled, ariaLabel) {
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = !!checked;
+  cb.disabled = !enabled;
+  cb.setAttribute('aria-label', ariaLabel);
+  cb.addEventListener('change', updateSelectionButtons);
+  return cb;
+}
 
 /* ---------------- toast ---------------- */
 let toastTimer = null;
@@ -101,7 +140,8 @@ function resetProgress() {
 }
 
 function setProgressTotal(rows) {
-  state.runProgress.total = rows.filter((r) => r.status === 'ready').length;
+  const ready = rows.filter((r) => r.status === 'ready').length;
+  state.runProgress.total = state.selectionSize ? Math.min(ready, state.selectionSize) : ready;
   updateProgress();
 }
 
@@ -143,8 +183,14 @@ function renderSchedule(rows) {
   els.scheduleEmpty.style.display = 'none';
   els.scheduleCount.textContent = `${rows.length} event${rows.length === 1 ? '' : 's'}`;
 
+  els.scheduleSelectAll.checked = false;
   for (const r of rows) {
     const tr = document.createElement('tr');
+    const tdPick = document.createElement('td');
+    tdPick.className = 'pick-col';
+    const canPick = r.status === 'ready' && !!r.classId;
+    const cb = pickCheckbox(false, canPick, `Select recording ${r.subject || ''} ${r.date}${r.classId ? ' id ' + r.classId : ''}`.trim());
+    tdPick.appendChild(cb);
     const tdDate = document.createElement('td');
     tdDate.className = 'date-cell'; tdDate.textContent = r.date;
     const tdSubj = document.createElement('td');
@@ -156,9 +202,66 @@ function renderSchedule(rows) {
     const label = r.status === 'ready' ? 'Download ready' : r.status === 'not recorded' ? 'Not recorded' : 'Recording pending';
     const chipEl = chip(label, kind);
     tdRec.appendChild(chipEl);
-    tr.append(tdDate, tdSubj, tdId, tdRec);
+    tr.append(tdPick, tdDate, tdSubj, tdId, tdRec);
     els.scheduleBody.appendChild(tr);
-    state.rows.set(rowKey(r), { tr, chip: chipEl });
+    state.rows.set(rowKey(r), { tr, chip: chipEl, checkbox: cb, classId: r.classId || '' });
+  }
+  updateSelectionButtons();
+}
+
+/* ---------------- news room files table ---------------- */
+function renderFiles(files) {
+  els.filesBody.innerHTML = '';
+  state.files.clear();
+  els.filesSelectAll.checked = false;
+  if (!files.length) {
+    els.filesEmpty.textContent = 'No downloadable files found in the selected date range.';
+    els.filesEmpty.style.display = '';
+    els.filesCount.textContent = '0 files';
+    updateSelectionButtons();
+    return;
+  }
+  els.filesEmpty.style.display = 'none';
+  els.filesCount.textContent = `${files.length} file${files.length === 1 ? '' : 's'}`;
+
+  for (const f of files) {
+    const tr = document.createElement('tr');
+    const tdPick = document.createElement('td');
+    tdPick.className = 'pick-col';
+    const cb = pickCheckbox(false, true, `Select file ${f.name}`);
+    tdPick.appendChild(cb);
+    const tdName = document.createElement('td');
+    tdName.className = 'name-cell'; tdName.textContent = f.name;
+    const tdSubj = document.createElement('td');
+    tdSubj.className = 'subj-cell'; tdSubj.textContent = f.subject || '(no subject)';
+    const tdSize = document.createElement('td');
+    tdSize.className = 'size-cell'; tdSize.textContent = f.size || '?';
+    const tdDate = document.createElement('td');
+    tdDate.className = 'date-cell'; tdDate.textContent = f.date || '-';
+    tr.append(tdPick, tdName, tdSubj, tdSize, tdDate);
+    els.filesBody.appendChild(tr);
+    state.files.set(f.id, { tr, checkbox: cb, id: f.id, sizeCell: tdSize });
+  }
+  updateSelectionButtons();
+}
+
+function updateFileRow(id, kind, detail) {
+  const entry = state.files.get(id);
+  if (!entry) return;
+  if (kind === 'downloaded') {
+    entry.sizeCell.textContent = '';
+    entry.sizeCell.appendChild(chip('Saved ✓', 'done'));
+    entry.tr.className = 'dl';
+  } else if (kind === 'failed') {
+    entry.sizeCell.textContent = '';
+    entry.sizeCell.appendChild(chip('Failed', 'failed'));
+    entry.tr.className = 'failed';
+  } else if (kind === 'started') {
+    entry.sizeCell.textContent = '';
+    entry.sizeCell.appendChild(chip('Downloading…', 'downloading'));
+  } else if (kind === 'skipped') {
+    entry.sizeCell.textContent = '';
+    entry.sizeCell.appendChild(chip('Already present', 'skipped'));
   }
 }
 
@@ -200,15 +303,10 @@ function setStatus(stateName, text) {
 
 function setRunning(running) {
   state.running = running;
-  els.runBtn.disabled = running;
+  els.scanBtn.disabled = running;
+  els.scanFilesBtn.disabled = running;
   els.cancelBtn.disabled = !running;
-  if (running) {
-    els.runBtn.innerHTML = '<span class="icon">&#9654;</span> Starting…';
-    els.runBtn.setAttribute('aria-label', 'Starting download');
-  } else {
-    els.runBtn.innerHTML = '<span class="icon">&#9654;</span> Start download';
-    els.runBtn.setAttribute('aria-label', 'Start download');
-  }
+  updateSelectionButtons();
 }
 
 function setStats(s) {
@@ -247,7 +345,7 @@ function connect() {
         if (evt.settings && evt.state === 'idle') populate(evt.settings);
         break;
       case 'run_started':
-        resetRunView();
+        if (evt.kind !== 'files-scan' && evt.kind !== 'files-download') resetRunView();
         appendLogLine('step', 'Run started.', evt.ts);
         break;
       case 'stage':
@@ -263,8 +361,22 @@ function connect() {
       case 'item':
         handleItem(evt.item);
         break;
+      case 'files':
+        renderFiles(evt.files);
+        break;
+      case 'file_item':
+        updateFileRow(evt.item.file.id, evt.item.kind, evt.item.detail);
+        break;
       case 'run_finished':
-        setStats(evt.summary);
+        if (evt.filesSummary) {
+          setStats({ downloaded: evt.filesSummary.downloaded ?? 0, skipped: evt.filesSummary.skipped ?? 0, failed: evt.filesSummary.failed ?? 0, pending: 0 });
+        } else if (evt.filesCount !== undefined) {
+          setStats({ downloaded: 0, skipped: 0, failed: 0, pending: 0 });
+          appendLogLine('ok', `Found ${evt.filesCount} file(s) — tick the ones you want, then hit Download files.`, evt.ts);
+          return;
+        } else {
+          setStats(evt.summary);
+        }
         appendLogLine('ok', evt.cancelled ? 'Run cancelled.' : 'Run finished.', evt.ts);
         break;
       case 'run_error':
@@ -345,29 +457,72 @@ async function browseFolder() {
 }
 
 /* ---------------- actions ---------------- */
-async function startRun() {
-  if (state.running) return;
+function formValid() {
   const form = collectForm();
-  if (!form.from || !form.to) { toast('Please choose both dates.', true); return; }
-  if (!form.dir) { toast('Please choose a download folder.', true); return; }
-  if (form.from > form.to) { toast('"From" must be before "To".', true); return; }
+  if (!form.from || !form.to) { toast('Please choose both dates.', true); return null; }
+  if (!form.dir) { toast('Please choose a download folder.', true); return null; }
+  if (form.from > form.to) { toast('"From" must be before "To".', true); return null; }
+  return form;
+}
 
+async function postRun(path, body) {
   try {
-    const res = await fetch('/api/run', {
+    const res = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
       toast(data.error || 'Could not start the run.', true);
-      return;
+      return false;
     }
-    // SSE 'run_started' will reset the view; flip the buttons immediately for responsiveness
-    setRunning(true);
+    setRunning(true); // SSE 'run_started' will reset the view; flip buttons now for responsiveness
+    return true;
   } catch {
     toast('Could not reach the dashboard server.', true);
+    return false;
   }
+}
+
+async function findRecordings() {
+  if (state.running) return;
+  const form = formValid();
+  if (!form) return;
+  appendLogLine('step', 'Scanning the calendar for downloadable recordings …', new Date().toISOString());
+  state.selectionSize = null;
+  await postRun('/api/run', { ...form, scanOnly: true });
+}
+
+async function downloadSelected() {
+  if (state.running) return;
+  const form = formValid();
+  if (!form) return;
+  const onlyIds = selectedClassIds();
+  if (!onlyIds.length) { toast('Tick at least one ready recording first.', true); return; }
+  appendLogLine('step', `Downloading ${onlyIds.length} selected recording(s) …`, new Date().toISOString());
+  state.selectionSize = onlyIds.length;
+  await postRun('/api/run', { ...form, scanOnly: false, onlyIds });
+}
+
+async function scanNewsRoomFiles() {
+  if (state.running) return;
+  const form = formValid();
+  if (!form) return;
+  appendLogLine('step', 'Scanning every subject news room for downloadable files …', new Date().toISOString());
+  state.selectionSize = null;
+  await postRun('/api/scan-files', form);
+}
+
+async function downloadFiles() {
+  if (state.running) return;
+  const form = formValid();
+  if (!form) return;
+  const fileIds = selectedFileIds();
+  if (!fileIds.length) { toast('Tick at least one file first.', true); return; }
+  appendLogLine('step', `Downloading ${fileIds.length} selected news room file(s) …`, new Date().toISOString());
+  state.selectionSize = null;
+  await postRun('/api/run-files', { ...form, fileIds });
 }
 
 async function cancelRun() {
@@ -408,9 +563,25 @@ function init() {
 
   clearLog();
 
-  els.runBtn.addEventListener('click', startRun);
+  els.scanBtn.addEventListener('click', findRecordings);
+  els.dlSelBtn.addEventListener('click', downloadSelected);
+  els.scanFilesBtn.addEventListener('click', scanNewsRoomFiles);
+  els.dlFilesBtn.addEventListener('click', downloadFiles);
   els.cancelBtn.addEventListener('click', cancelRun);
   els.browseBtn.addEventListener('click', browseFolder);
+
+  els.scheduleSelectAll.addEventListener('change', () => {
+    for (const [key, entry] of state.rows) {
+      if (!entry.checkbox.disabled) entry.checkbox.checked = els.scheduleSelectAll.checked;
+    }
+    updateSelectionButtons();
+  });
+  els.filesSelectAll.addEventListener('change', () => {
+    for (const [key, entry] of state.files) {
+      entry.checkbox.checked = els.filesSelectAll.checked;
+    }
+    updateSelectionButtons();
+  });
 
   for (const btn of document.querySelectorAll('.preset')) {
     btn.addEventListener('click', () => applyPreset(Number(btn.dataset.days)));

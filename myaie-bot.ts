@@ -8,7 +8,7 @@
 import { parseArgs } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildConfig, runBot, runSelftest, shortUrl, type LogLevel, type ScheduleRow } from './bot-core.ts';
+import { buildConfig, downloadFiles, runBot, runSelftest, scanNewsRoomWithLogin, shortUrl, type FeedFile, type LogLevel, type ScheduleRow } from './bot-core.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,12 +42,23 @@ OPTIONS
   --login-timeout <sec>     How long to wait for manual login (default: 300)
   --verbose                 Verbose logging
   --selftest                Run built-in logic tests and exit
+  --scan-only               Find recordings and list them; download nothing
+  --select <ids>            Download only the class ids listed (comma-separated,
+                            as shown by the schedule listing)
+  --scan-files              Scan News Room feeds for downloadable files and list
+                            them (PDF/PPTX/DOCX attachments); download nothing
+  --download-files <ids>    Download the News Room files whose attachment ids are
+                            listed (comma-separated, as shown by --scan-files)
   -h, --help                Show this help
 
 EXAMPLES
   node myaie-bot.ts --from 2026-06-01 --to 2026-07-31
   node myaie-bot.ts --from 2026-06-01 --subject "Computer Networks" --dry-run
   node myaie-bot.ts --from 2026-01-01 --to 2026-12-31 --max 10
+  node myaie-bot.ts --scan-only --from 2026-07-01          # list ready recordings
+  node myaie-bot.ts --select 272425,272430 --from 2026-07-01   # download only those
+  node myaie-bot.ts --scan-files --from 2026-07-01         # list news-room files
+  node myaie-bot.ts --download-files 15041,15042 --from 2026-07-01
 
 GUI
   node gui-server.ts        Launch the professional web dashboard instead.
@@ -76,6 +87,10 @@ function parseCliArgs() {
       'yt-dlp-timeout': { type: 'string' },
       verbose: { type: 'boolean' },
       selftest: { type: 'boolean' },
+      'scan-only': { type: 'boolean' },
+      select: { type: 'string' },
+      'scan-files': { type: 'boolean' },
+      'download-files': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -100,6 +115,10 @@ function parseCliArgs() {
     ytDlpTimeout: values['yt-dlp-timeout'],
     verbose: !!values.verbose,
     selftest: !!values.selftest,
+    scanOnly: !!values['scan-only'],
+    selection: values.select ? String(values.select).split(',').map((x) => x.trim()).filter(Boolean) : undefined,
+    scanFiles: !!values['scan-files'],
+    downloadFiles: values['download-files'] ? String(values['download-files']).split(',').map((x) => x.trim()).filter(Boolean) : undefined,
     help: !!values.help,
   };
 }
@@ -131,6 +150,38 @@ async function main(): Promise<void> {
   }
 
   const log = makeConsoleLog(cfg.verbose);
+
+  if (parts.scanFiles) {
+    log.step('Scanning News Room feeds for downloadable files ...');
+    const files = await scanNewsRoomWithLogin(cfg, { log: (level: LogLevel, msg: string) => { const fn = log[level]; if (fn) fn(msg); } });
+    if (files.length === 0) { log.warn('No downloadable files found in the date range.'); return; }
+    log.step(`Found ${files.length} file(s):`);
+    for (const f of files) {
+      log.info(`  ${f.date}  [${f.size || '?'}]  ${f.subject || '(no subject)'}  ${f.name}  id=${f.id}`);
+    }
+    log.info(`Download them with:  --download-files ${files.map((f) => f.id).join(',')}`);
+    return;
+  }
+
+  if (parts.downloadFiles) {
+    const wanted = new Set(parts.downloadFiles);
+    log.step('Scanning News Room feeds to resolve the selected files ...');
+    const files = await scanNewsRoomWithLogin(cfg, { log: (level: LogLevel, msg: string) => { const fn = log[level]; if (fn) fn(msg); } });
+    const selected = files.filter((f) => wanted.has(f.id));
+    const missing = [...wanted].filter((id) => !selected.some((f) => f.id === id)).length;
+    if (selected.length === 0) {
+      log.err(`None of the requested ids matched a file in the date range (${wanted.size} requested). Run --scan-files first to list ids.`);
+      return;
+    }
+    if (missing > 0) log.warn(`${missing} requested id(s) not found in the date range — downloading the ${selected.length} matched.`);
+    await downloadFiles(cfg, selected, {
+      log: (level: LogLevel, msg: string) => { const fn = log[level]; if (fn) fn(msg); },
+      stage: () => {},
+      fileItem: (it) => {},
+      isCancelled: () => false,
+    });
+    return;
+  }
 
   await runBot(cfg, {
     log: (level: LogLevel, msg: string) => { const fn = log[level]; if (fn) fn(msg); },

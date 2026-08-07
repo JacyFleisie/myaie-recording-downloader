@@ -193,6 +193,13 @@ input, select { font: inherit; color: var(--text); }
   color: #fff; box-shadow: 0 10px 24px rgba(99, 102, 241, 0.4), inset 0 1px 0 rgba(255,255,255,0.25);
 }
 .btn-primary:hover:not(:disabled) { box-shadow: 0 12px 30px rgba(99, 102, 241, 0.55); transform: translateY(-1px); }
+.btn-accent {
+  flex: 1;
+  background: linear-gradient(135deg, #0ea5e9, #22d3ee);
+  color: #04121f;
+  box-shadow: 0 10px 24px rgba(14, 165, 233, 0.35), inset 0 1px 0 rgba(255,255,255,0.35);
+}
+.btn-accent:hover:not(:disabled) { box-shadow: 0 12px 30px rgba(14, 165, 233, 0.5); transform: translateY(-1px); }
 .btn-danger {
   background: rgba(248, 113, 113, 0.12); color: var(--err);
   border-color: rgba(248, 113, 113, 0.4);
@@ -264,6 +271,15 @@ input, select { font: inherit; color: var(--text); }
 .lg-fail { background: var(--err); }
 
 /* ---------- schedule table ---------- */
+.pick-col { width: 34px; text-align: center; }
+.pick-col input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.pick-col input:disabled { opacity: 0.35; cursor: not-allowed; }
+.name-cell { font-weight: 600; color: var(--text); }
+.size-cell { white-space: nowrap; color: var(--text-dim); }
+.card-note { margin: -6px 0 12px; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.card-note b { color: var(--text); }
+.actions { flex-wrap: wrap; }
+.actions .btn { flex: 1 1 auto; }
 .table-wrap { position: relative; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {

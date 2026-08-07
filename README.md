@@ -33,6 +33,13 @@ get new features without ever re-downloading an installer.
 
 - **Scans your calendar schedule** for a date range you choose (7d / 30d / 90d /
   6mo presets, or any custom range) and lists every recorded session.
+- **Two-phase downloads** — hit **Find recordings** to see what's available
+  first, tick the classes you want (or select all), then **Download selected**.
+  No more downloading everything blindly.
+- **News Room files** — **Find news room files** scans every subject's news room
+  and lists the file attachments (PDF / PPTX / DOCX …) in your date range, with
+  sizes and subjects, so you can tick and download exactly the study material
+  you need alongside the recordings.
 - **Downloads the recordings** as MP4s to a folder you pick — including
   embedded Vimeo/YouTube videos (via a bundled yt-dlp with your session's
   cookies), so nothing is missed.
@@ -43,6 +50,20 @@ get new features without ever re-downloading an installer.
   your settings persist between sessions.
 - **Your login stays private** — it reuses your real Chrome profile; you log in
   once (like on the website) and your session is reused, never stored or shared.
+
+## 🎯 Typical flow
+
+1. Pick a **date range** (or use a preset).
+2. **Find recordings** — the bot logs in, scans every subject's calendar and
+   lists each session with a status chip (Download ready / Recording pending…).
+3. **Tick the recordings you want** and hit **Download selected** — only those
+   download.
+4. **Find news room files** — the same scan against every subject's News Room
+   returns file attachments (with size + subject + date). Tick and hit
+   **Download files**.
+
+Both lists keep their checkboxes between runs, and the CLI has matching flags
+(`--scan-only`, `--select`, `--scan-files`, `--download-files`).
 
 ## 🚀 Quick start (for developers)
 

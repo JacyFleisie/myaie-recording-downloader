@@ -61,6 +61,7 @@ export interface ConfigParts {
   apiBase?: unknown; loginTimeout?: unknown; dryRun?: unknown; inspect?: unknown;
   headless?: unknown; noAudit?: unknown; fallbackRecording?: unknown; ytdlp?: unknown;
   ytDlpPath?: unknown; ytDlpTimeout?: unknown; verbose?: unknown;
+  scanOnly?: unknown; selection?: unknown;
 }
 
 export interface RunConfig {
@@ -69,6 +70,8 @@ export interface RunConfig {
   apiBase: string; loginTimeout: number; dryRun: boolean; inspect: boolean;
   headless: boolean; noAudit: boolean; fallbackRecording: boolean; ytdlp: boolean;
   ytDlpPath?: string; ytDlpTimeout: number; verbose: boolean; inspectPath: string;
+  scanOnly: boolean;            // discover + list only (no downloads)
+  selection?: string[];         // class ids to download (empty/absent = all ready)
 }
 
 export type RowStatus = 'not recorded' | 'recording pending' | 'ready';
@@ -87,14 +90,30 @@ export interface ItemEvent {
   row: ScheduleRow; detail?: string; sizeMb?: string; method?: string;
 }
 
+/** A downloadable file attachment from a subject's News Room feed message. */
+export interface FeedFile {
+  id: string;            // attachment id (stable across scans)
+  name: string;          // originalName, e.g. "Unit3_Networking_...pptx"
+  size: string;          // human-readable size from the portal, e.g. "16.6 KB"
+  url: string;           // absolute download URL
+  subject: string;       // course name, e.g. "Computer Networks"
+  roomId: string;        // subject/room id
+  messageId: string;     // feed message id
+  date: string;          // YYYY-MM-DD of the message
+  ext: string;           // ".pdf" / ".docx" / ...
+}
+
 export interface BotEvents {
   log?: Logger;
   stage?: (stage: string) => void;
   schedule?: (rows: ScheduleRow[]) => void;
   item?: (item: ItemEvent) => void;
+  fileItem?: (item: { kind: 'started' | 'downloaded' | 'failed' | 'skipped'; file: FeedFile; detail?: string; sizeMb?: string }) => void;
   summary?: (summary: Summary) => void;
   isCancelled?: () => boolean;
 }
+
+export interface FileSummary { downloaded: number; skipped: number; failed: number; cancelled?: boolean; }
 
 export interface DownloadOk { ok: true; method: 'browser' | 'stream' | 'ytdlp'; suggested?: string; contentType?: string; browserError?: string; file?: string; ext?: string; }
 export interface DownloadFail { ok: false; error: string; }
@@ -274,6 +293,61 @@ export function extractList(payload: unknown): unknown[] {
   if (payload && Array.isArray((payload as { result?: unknown }).result)) return (payload as { result: unknown[] }).result;
   return [];
 }
+
+// ---------------------------------------------------------------------------
+// News Room file attachments
+// ---------------------------------------------------------------------------
+// Feed messages carry `attachments: [{ attachment: '/home/myaie/public_html/
+// Library/feedResources/post-<id>', originalName, extentsion, size }]`. The
+// portal serves them from www.myaie.ac (public_html root), so the download URL
+// is the path with the public_html prefix stripped:
+//   /home/myaie/public_html/Library/feedResources/post-x.docx
+//     -> https://www.myaie.ac/Library/feedResources/post-x.docx
+export const FILE_BASE = 'https://www.myaie.ac';
+
+export function attachmentDownloadUrl(attachmentPath: string): string {
+  if (!attachmentPath) return '';
+  if (/^https?:\/\//i.test(attachmentPath)) return attachmentPath; // already absolute
+  const rel = String(attachmentPath).replace(/.*\/public_html\//, '').replace(/^\/+/, '');
+  return FILE_BASE + '/' + rel;
+}
+
+/** Pull every downloadable attachment out of raw feed messages. */
+export function extractFeedFiles(rawItems: Array<Record<string, unknown>>, subjectById: Map<string, string>): FeedFile[] {
+  const out: FeedFile[] = [];
+  const seen = new Set<string>();
+  for (const it of rawItems) {
+    const atts = it.attachments;
+    if (!Array.isArray(atts) || atts.length === 0) continue;
+    const roomId = String(pick(it, ['room_id', 'roomId']) ?? '');
+    const messageId = String(pick(it, ['id']) ?? '');
+    const subject = subjectById.get(roomId) || String(it.subject || '') || 'Unknown';
+    for (const a of atts) {
+      if (!a || typeof a !== 'object') continue;
+      const att = a as Record<string, unknown>;
+      const id = String(att.id ?? '');
+      if (!id || seen.has(id)) continue;
+      const rawPath = String(att.attachment ?? '');
+      if (!rawPath || String(att.fileType ?? '') === 'render') continue; // render-type are inline previews
+      const name = String(att.originalName ?? rawPath.split('/').pop() ?? 'file');
+      const ext = String(att.extentsion ?? att.extension ?? path.extname(name));
+      const created = String(att.created_at ?? '');
+      seen.add(id);
+      out.push({
+        id,
+        name,
+        size: String(att.size ?? ''),
+        url: attachmentDownloadUrl(rawPath),
+        subject,
+        roomId,
+        messageId,
+        date: created.slice(0, 10),
+        ext,
+      });
+    }
+  }
+  return out;
+}
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -306,6 +380,10 @@ export function buildConfig(parts: ConfigParts, baseDir: string = process.cwd())
     ytDlpPath: parts.ytDlpPath ? String(parts.ytDlpPath) : undefined,
     ytDlpTimeout: parts.ytDlpTimeout ? parseInt(String(parts.ytDlpTimeout), 10) : 1200,
     verbose: !!parts.verbose,
+    scanOnly: !!parts.scanOnly,
+    selection: Array.isArray(parts.selection)
+      ? parts.selection.filter((x): x is string => typeof x === 'string' && x !== '')
+      : undefined,
     inspectPath: path.join(baseDir, 'calendar_dump.json'),
   };
 
@@ -393,7 +471,7 @@ async function getUserId(page: Page): Promise<string | null> {
 // getAllSubjectCalendar; each subject's sessions (with isRecorded,
 // recordings HTML, class_date) come from the paginated
 // getPostFeedMessagesPaginateTz feed.
-async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise<ClassSession[]> {
+async function fetchSubjects(page: Page, cfg: RunConfig, log: Logger): Promise<{ token: string; userId: string; subjects: ClassSession[] }> {
   const token = await getToken(page);
   if (!token) throw new Error('No token found in localStorage — are you logged in?');
   const userId = await getUserId(page);
@@ -411,8 +489,14 @@ async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise
   const subjects = extractList(subjRes.json) as ClassSession[];
   if (subjects.length === 0) log('warn', 'Subject calendar returned no subjects (or an unexpected shape).');
   log('ok', `${subjects.length} subject(s) found.`);
+  return { token, userId, subjects };
+}
+
+async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise<{ classes: ClassSession[]; rawItems: Array<Record<string, unknown>> }> {
+  const { token, userId, subjects } = await fetchSubjects(page, cfg, log);
 
   const classes: ClassSession[] = [];
+  const rawItems: Array<Record<string, unknown>> = []; // message objects (carry news-room attachments)
   for (const subj of subjects) {
     const sid = pick(subj, ['id', 'subjectId', 'subject_id', 'room_id']);
     if (sid === undefined) continue;
@@ -427,6 +511,7 @@ async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise
       if (Number.isInteger(payload.lastPage)) lastPage = payload.lastPage as number;
       const items = Array.isArray(payload.data) ? payload.data : [];
       for (const it of items) {
+        rawItems.push((it as Record<string, unknown>) || {});
         const ca = (it as { ClassArray?: ClassSession | ClassSession[] } | null)?.ClassArray;
         if (Array.isArray(ca)) classes.push(...ca);
         else if (ca) classes.push(ca);
@@ -435,7 +520,65 @@ async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise
     }
   }
   log('ok', `Collected ${classes.length} class session(s) across ${subjects.length} subject(s).`);
-  return classes;
+  return { classes, rawItems };
+}
+
+/**
+ * Scan every subject's News Room feed for downloadable file attachments
+ * (PDFs, PPTX, DOCX, ...). Returns them filtered to the run's date range and
+ * subject filter, so the caller can display a list for the user to pick from.
+ */
+export async function scanNewsRoom(page: Page, cfg: RunConfig, log: Logger): Promise<FeedFile[]> {
+  const { token, userId, subjects } = await fetchSubjects(page, cfg, log);
+  const subjectById = new Map<string, string>();
+  for (const subj of subjects) {
+    const sid = pick(subj, ['id', 'subjectId', 'subject_id', 'room_id']);
+    const sname = pick(subj, ['name', 'subjectName', 'subject', 'subject_name']) ?? sid;
+    if (sid !== undefined) subjectById.set(String(sid), String(sname));
+  }
+
+  log('step', 'Scanning News Room feeds for downloadable files ...');
+  const rawItems: Array<Record<string, unknown>> = [];
+  for (const subj of subjects) {
+    const sid = pick(subj, ['id', 'subjectId', 'subject_id', 'room_id']);
+    if (sid === undefined) continue;
+    const sname = subjectById.get(String(sid)) ?? String(sid);
+    if (cfg.subject && !sname.toLowerCase().includes(cfg.subject)) continue;
+    log('info', `  scanning news room of "${sname}" ...`);
+    let pageNum = 1, lastPage = 1;
+    while (pageNum <= lastPage && pageNum <= 25) {
+      const feedPath = `/getPostFeedMessagesPaginateTz?page=${pageNum}&limit=50&needOnlineClass=1&room_id=${encodeURIComponent(String(sid))}&user_id=${encodeURIComponent(userId)}`;
+      const res = await pageFetchJson(page, cfg.apiBase, token, feedPath);
+      if (!res.ok) { log('warn', `    feed page ${pageNum} failed (HTTP ${res.status})`); break; }
+      const payload = (res.json || {}) as { lastPage?: number; data?: unknown[] };
+      if (Number.isInteger(payload.lastPage)) lastPage = payload.lastPage as number;
+      if (Array.isArray(payload.data)) rawItems.push(...payload.data as Array<Record<string, unknown>>);
+      pageNum++;
+    }
+  }
+
+  let files = extractFeedFiles(rawItems, subjectById);
+  const fromStr = dateStr(cfg.from), toStr = dateStr(cfg.to);
+  const before = files.length;
+  files = files
+    .filter((f) => !cfg.subject || f.subject.toLowerCase().includes(cfg.subject))
+    .filter((f) => !f.date || (f.date >= fromStr && f.date <= toStr))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  log('ok', `${files.length} file(s) found${files.length !== before ? ` (${before - files.length} outside the date range)` : ''}.`);
+  return files;
+}
+
+/** Open a logged-in session, scan News Room feeds and return the files found. */
+export async function scanNewsRoomWithLogin(cfg: RunConfig, events: BotEvents = {}): Promise<FeedFile[]> {
+  const log = (level: LogLevel, message: string) => events.log && events.log(level, message);
+  try {
+    return await withPortalSession(cfg, events, async (_context, page) => {
+      return scanNewsRoom(page, cfg, log);
+    });
+  } catch (e) {
+    if (e instanceof RunCancelled) return [];
+    throw e;
+  }
 }
 
 async function fireAuditCall(page: Page, cfg: RunConfig, classId: string): Promise<void> {
@@ -650,6 +793,71 @@ async function downloadOne(context: BrowserContext, url: string, targetPath: str
     }
   }
 }
+/**
+ * Download a user-picked set of News Room file attachments. `files` is the
+ * result of scanNewsRoom() (or a filtered subset of it); each file is saved
+ * under the run's download folder using its original name.
+ */
+export async function downloadFiles(cfg: RunConfig, files: FeedFile[], events: BotEvents = {}): Promise<FileSummary> {
+  const log = (level: LogLevel, message: string) => events.log && events.log(level, message);
+  const stage = (s: string) => events.stage && events.stage(s);
+  const emitFile = (kind: 'started' | 'downloaded' | 'failed' | 'skipped', file: FeedFile, detail?: string, sizeMb?: string) =>
+    events.fileItem && events.fileItem({ kind, file, detail, sizeMb });
+  const isCancelled = events.isCancelled || (() => false);
+
+  stage('launching');
+  log('info', `News Room file download — ${files.length} file(s) into ${cfg.dir}`);
+  if (cfg.dryRun) {
+    log('ok', `DRY RUN — would download ${files.length} file(s). Nothing was downloaded.`);
+    return { downloaded: 0, skipped: 0, failed: 0 };
+  }
+
+  try {
+    return await withPortalSession(cfg, events, async (context) => {
+    stage('downloading');
+    fs.mkdirSync(cfg.dir, { recursive: true });
+    let okCount = 0, skipCount = 0, failCount = 0;
+    for (const f of files) {
+      if (isCancelled()) { log('warn', 'Cancellation requested — stopping.'); break; }
+      const name = sanitize(f.name) || `file_${f.id}`;
+      const target = path.join(cfg.dir, name);
+      if (fs.existsSync(target)) {
+        log('ok', `skipped (already downloaded): ${name}`);
+        emitFile('skipped', f, name);
+        skipCount++;
+        continue;
+      }
+      log('step', `  downloading: ${name}  [${f.subject}]`);
+      emitFile('started', f);
+      const result = await downloadOne(context, f.url, target, cfg, log);
+      if (!result.ok) {
+        log('err', `  FAILED: ${result.error}`);
+        emitFile('failed', f, result.error);
+        failCount++;
+        try { fs.unlinkSync(target); } catch { /* not created */ }
+        continue;
+      }
+      let final = target;
+      if (result.method === 'browser' && result.suggested && !path.extname(target)) final = ensureMediaExt(target, result.suggested);
+      else if (result.file) final = result.file;
+      const sizeMb = fs.existsSync(final) ? (fs.statSync(final).size / 1e6).toFixed(1) : '?';
+      log('ok', `  saved ${path.basename(final)} (${sizeMb} MB, via ${result.method}${result.browserError ? ' fallback' : ''})`);
+      emitFile('downloaded', f, path.basename(final), sizeMb);
+      okCount++;
+    }
+    stage('done');
+    const summary: FileSummary = { downloaded: okCount, skipped: skipCount, failed: failCount, cancelled: isCancelled() };
+    log('step', `Files summary: ${okCount} downloaded, ${skipCount} already present, ${failCount} failed.`);
+    return summary;
+    });
+  } catch (e) {
+    if (e instanceof RunCancelled) {
+      log('warn', 'Cancelled while waiting for login.');
+      return { downloaded: 0, skipped: 0, failed: 0, cancelled: true };
+    }
+    throw e;
+  }
+}
 // ---------------------------------------------------------------------------
 // Selftest (pure logic, no browser)
 // ---------------------------------------------------------------------------
@@ -706,6 +914,26 @@ export function runSelftest(): void {
 
   assert(sanitize('Object Oriented Programming') === 'Object_Oriented_Programming', 'sanitize');
 
+  // News Room file attachments
+  assert(attachmentDownloadUrl('/home/myaie/public_html/Library/feedResources/post-265795-616-1785920411286-59.docx') === 'https://www.myaie.ac/Library/feedResources/post-265795-616-1785920411286-59.docx', 'attachmentDownloadUrl strips public_html');
+  assert(attachmentDownloadUrl('https://cdn.example.com/a.pdf') === 'https://cdn.example.com/a.pdf', 'attachmentDownloadUrl keeps absolute URLs');
+  assert(attachmentDownloadUrl('') === '', 'attachmentDownloadUrl empty');
+  const rawMsgs: Array<Record<string, unknown>> = [
+    {
+      id: 225252, room_id: 85801,
+      attachments: [
+        { id: 15041, attachment: '/home/myaie/public_html/Library/feedResources/post-225252-457000096-96-177513541', originalName: 'Collabo activity_undefined_1775135323.docx', extentsion: '.docx', size: '16.6 KB', created_at: '2026-04-02T13:10:10.000Z' },
+        { id: 15042, attachment: '/home/myaie/public_html/Library/feedResources/post-225252-457000096-37-177513541', originalName: 'Final-Sharing.pptx', extentsion: '.pptx', size: '2.1 MB', created_at: '2026-04-02T13:10:10.000Z' },
+        { id: 15043, attachment: '/home/myaie/public_html/Library/feedResources/render-123', originalName: 'inline.png', fileType: 'render', size: '1 KB', created_at: '2026-04-02T13:10:10.000Z' },
+      ],
+    },
+  ];
+  const files = extractFeedFiles(rawMsgs, new Map([['85801', 'Digital Productivity']]));
+  assert(files.length === 2, 'extractFeedFiles skips render-type attachments');
+  assert(files[0].subject === 'Digital Productivity', 'extractFeedFiles maps room_id to subject');
+  assert(files[0].url === 'https://www.myaie.ac/Library/feedResources/post-225252-457000096-96-177513541', 'extractFeedFiles builds download URL');
+  assert(files[0].date === '2026-04-02' && files[0].ext === '.docx', 'extractFeedFiles keeps date + ext');
+
   // date-range filtering
   const from = parseDate('2026-07-01') as Date, to = parseDate('2026-07-31') as Date;
   const inRange = (d: Date): boolean => {
@@ -719,6 +947,64 @@ export function runSelftest(): void {
   console.log('Selftest PASSED.');
   process.exit(0);
 }
+// ---------------------------------------------------------------------------
+// Portal session (shared by recordings and news-room file downloads)
+// ---------------------------------------------------------------------------
+// Launch the persistent Chrome profile, open the portal and wait for login,
+// run fn(context, page), then always close the browser.
+/** Thrown when the user cancels while waiting for login. */
+export class RunCancelled extends Error {
+  constructor() { super('Run cancelled'); this.name = 'RunCancelled'; }
+}
+
+async function withPortalSession<T>(
+  cfg: RunConfig,
+  events: BotEvents,
+  fn: (context: BrowserContext, page: Page) => Promise<T>
+): Promise<T> {
+  const log = (level: LogLevel, message: string) => events.log && events.log(level, message);
+  const stage = (s: string) => events.stage && events.stage(s);
+  const isCancelled = events.isCancelled || (() => false);
+  const checkCancel = (): boolean => {
+    if (isCancelled()) { log('warn', 'Cancellation requested — stopping.'); return true; }
+    return false;
+  };
+
+  const { context, browser } = await launchBrowser(cfg);
+  let page: Page;
+  try {
+    page = context.pages()[0] || (await context.newPage());
+  } catch (e) {
+    await context.close().catch(() => {});
+    try { await browser?.close(); } catch { /* already closed */ }
+    throw e;
+  }
+  try {
+    stage('opening-portal');
+    log('step', 'Opening the portal calendar ...');
+    await page.goto(CALENDAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async () => {
+      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+
+    // ---- wait for login ----
+    stage('waiting-login');
+    const deadline = Date.now() + cfg.loginTimeout * 1000;
+    let token: string | null = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
+    while (!token && Date.now() < deadline) {
+      if (checkCancel()) throw new RunCancelled();
+      log('warn', 'Not logged in yet — please log in in the opened Chrome window (the bot will continue automatically).');
+      await page.waitForTimeout(4000);
+      token = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
+    }
+    if (!token) throw new Error(`Login timeout (${cfg.loginTimeout}s). Log in and rerun — your session is saved in ${cfg.profile}`);
+    log('ok', 'Logged in (session token found).');
+    return await fn(context, page);
+  } finally {
+    await context.close().catch(() => {});
+    try { await browser?.close(); } catch { /* already closed */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main engine
 // ---------------------------------------------------------------------------
@@ -748,43 +1034,19 @@ export async function runBot(cfg: RunConfig, events: BotEvents = {}): Promise<Su
     else log('warn', 'yt-dlp requested but not found — run `pip install yt-dlp` or place yt-dlp.exe next to the bot (or set --yt-dlp-path); embedded videos will be skipped.');
   }
 
-  const { context, browser } = await launchBrowser(cfg);
-  let page: Page;
   try {
-    page = context.pages()[0] || (await context.newPage());
-  } catch (e) {
-    await context.close().catch(() => {});
-    try { await browser?.close(); } catch { /* already closed */ }
-    throw e;
-  }
-
-  try {
-    stage('opening-portal');
-    log('step', 'Opening the portal calendar ...');
-    await page.goto(CALENDAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async () => {
-      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    });
-
-    // ---- wait for login ----
-    stage('waiting-login');
-    const deadline = Date.now() + cfg.loginTimeout * 1000;
-    let token: string | null = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
-    while (!token && Date.now() < deadline) {
-      if (checkCancel()) return { downloaded: 0, skipped: 0, failed: 0, pending: 0, cancelled: true };
-      log('warn', 'Not logged in yet — please log in in the opened Chrome window (the bot will continue automatically).');
-      await page.waitForTimeout(4000);
-      token = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
-    }
-    if (!token) throw new Error(`Login timeout (${cfg.loginTimeout}s). Log in and rerun — your session is saved in ${cfg.profile}`);
-    log('ok', 'Logged in (session token found).');
+    return await withPortalSession(cfg, events, async (context, page) => {
 
     // ---- fetch subjects + class sessions ----
     stage('fetching-calendar');
-    const classesArr = await fetchAllClasses(page, cfg, log);
+    const { classes: classesArr, rawItems } = await fetchAllClasses(page, cfg, log);
     if (cfg.inspect) {
       fs.writeFileSync(cfg.inspectPath, JSON.stringify(classesArr, null, 2));
+      const rawPath = cfg.inspectPath.replace(/\.json$/, '_feed_items.json');
+      fs.writeFileSync(rawPath, JSON.stringify(rawItems, null, 2));
       log('ok', `Wrote ${classesArr.length} raw class sessions to ${cfg.inspectPath}`);
-      log('info', 'Inspect mode — open that file to see the exact field names, then rerun without --inspect.');
+      log('ok', `Wrote ${rawItems.length} raw feed messages to ${rawPath}`);
+      log('info', 'Inspect mode — open those files to see the exact field names, then rerun without --inspect.');
       return { downloaded: 0, skipped: 0, failed: 0, pending: 0, inspect: true, count: classesArr.length };
     }
 
@@ -812,12 +1074,25 @@ export async function runBot(cfg: RunConfig, events: BotEvents = {}): Promise<Su
     });
     emitSchedule(rows);
 
-    const ready = rows.filter((r) => r.status === 'ready');
+    let ready = rows.filter((r) => r.status === 'ready');
+    if (cfg.selection && cfg.selection.length > 0) {
+      const wanted = new Set(cfg.selection);
+      const picked = ready.filter((r) => wanted.has(r.classId));
+      const omitted = ready.length - picked.length;
+      ready = picked;
+      log('info', omitted > 0
+        ? `Selection: ${picked.length} of ${picked.length + omitted} ready recording(s) chosen — downloading only those.`
+        : `Selection: all ${picked.length} ready recording(s) chosen.`);
+    }
     const pending = rows.filter((r) => r.status !== 'ready').length;
     if (checkCancel()) return { downloaded: 0, skipped: 0, failed: 0, pending, cancelled: true };
     if (cfg.dryRun) {
       log('ok', `DRY RUN — ${ready.length} recording(s) ready. Nothing was downloaded.`);
       return { downloaded: 0, skipped: 0, failed: 0, pending, wouldDownload: ready.length, dryRun: true };
+    }
+    if (cfg.scanOnly) {
+      log('ok', `SCAN — ${ready.length} recording(s) ready. Nothing downloaded — pick what you want, then run the download.`);
+      return { downloaded: 0, skipped: 0, failed: 0, pending, wouldDownload: ready.length, scanOnly: true };
     }
     if (ready.length === 0) {
       log('warn', 'Nothing to download (no ready recordings in range).');
@@ -880,8 +1155,12 @@ export async function runBot(cfg: RunConfig, events: BotEvents = {}): Promise<Su
     log('info', `  not recorded / pending in range: ${pending}`);
     if (cancelled) log('warn', '  run was cancelled before finishing.');
     return summary;
-  } finally {
-    await context.close().catch(() => {});
-    try { await browser?.close(); } catch { /* already closed */ }
+    });
+  } catch (e) {
+    if (e instanceof RunCancelled) {
+      log('warn', 'Cancelled while waiting for login.');
+      return { downloaded: 0, skipped: 0, failed: 0, pending: 0, cancelled: true };
+    }
+    throw e;
   }
 }
