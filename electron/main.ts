@@ -10,7 +10,11 @@
  */
 import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import electronUpdater from 'electron-updater';
+
+// ESM has no __dirname — derive it from the module URL (same pattern as gui-server.ts).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { autoUpdater } = electronUpdater as { autoUpdater: import('electron-updater').AppUpdater };
 import { startServer } from '../gui-server.ts';
 
@@ -25,7 +29,7 @@ async function startEmbeddedServer(): Promise<ServerHandle> {
   return serverHandle;
 }
 
-function createWindow(): void {
+function createWindow(show = true): void {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 920,
@@ -33,6 +37,7 @@ function createWindow(): void {
     minHeight: 620,
     title: 'myAIE Lecture Downloader',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    show,
     autoHideMenuBar: true,
     backgroundColor: '#0b1120',
     webPreferences: {
@@ -94,10 +99,16 @@ function setupAutoUpdates(): void {
 
   autoUpdater.on('error', (err) => {
     // Network / no-release-yet failures are non-fatal — keep the app usable.
-    console.warn('Update check failed:', err.message);
+    console.warn('[updater] check failed:', err.message);
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[updater] you are on the latest version');
   });
 
-  autoUpdater.checkForUpdates().catch(() => { /* offline or no release yet — fine */ });
+  autoUpdater.checkForUpdates().catch((e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[updater] could not reach GitHub (offline / no release yet / blocked):', msg);
+  });
 }
 
 // Single instance: two windows would fight over the same settings/dashboard port.
@@ -115,10 +126,14 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     try {
       if (process.argv.includes('--smoke')) {
-        // Headless self-check for CI / local validation.
+        // Headless self-check for CI / local validation. Build a hidden window
+        // too, so window config (icon path, web prefs) errors surface here
+        // instead of only when a real user launches the app.
         const h = await startEmbeddedServer();
         const res = await fetch(h.url + 'api/status');
         const body = (await res.json()) as { state: string };
+        createWindow(false);
+        await new Promise((r) => setTimeout(r, 800)); // let the window load the dashboard
         console.log('SMOKE OK', res.status, JSON.stringify({ state: body.state, url: h.url }));
         await h.close();
         serverHandle = null;
@@ -131,7 +146,7 @@ if (!gotLock) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Failed to start:', msg);
-      dialog.showErrorBox('myAIE Lecture Downloader', 'Could not start the dashboard server:\n' + msg);
+      dialog.showErrorBox('myAIE Lecture Downloader', 'Could not start the app:\n' + msg);
       app.quit();
     }
   });

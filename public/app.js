@@ -18,7 +18,7 @@ const els = {
   toast: $('toast'),
   statDown: $('statDown'), statSkip: $('statSkip'), statFail: $('statFail'), statPending: $('statPending'),
   runProgress: $('runProgress'), runProgressBar: $('runProgressBar'), runProgressText: $('runProgressText'),
-  hint: $('hint'), hintClose: $('hintClose'), hintGotIt: $('hintGotIt'), showTips: $('showTips'),
+  hint: $('hint'), hintClose: $('hintClose'), hintGotIt: $('hintGotIt'),
   appVersion: $('appVersion'), footerVersion: $('footerVersion'),
 };
 
@@ -590,11 +590,6 @@ function init() {
   els.hintClose.addEventListener('click', hideHint);
   els.hintGotIt.addEventListener('click', hideHint);
   if (localStorage.getItem('myaie-hint') === '1') els.hint.style.display = 'none';
-  els.showTips.addEventListener('click', () => {
-    els.hint.style.display = '';
-    localStorage.removeItem('myaie-hint');
-    toast('Quick-start tips are back in the corner.');
-  });
 
   initTooltips();
 
