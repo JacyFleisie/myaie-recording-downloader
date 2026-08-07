@@ -18,9 +18,40 @@ const els = {
   toast: $('toast'),
   statDown: $('statDown'), statSkip: $('statSkip'), statFail: $('statFail'), statPending: $('statPending'),
   runProgress: $('runProgress'), runProgressBar: $('runProgressBar'), runProgressText: $('runProgressText'),
-  hint: $('hint'), hintClose: $('hintClose'),
+  hint: $('hint'), hintClose: $('hintClose'), hintGotIt: $('hintGotIt'), showTips: $('showTips'),
   appVersion: $('appVersion'), footerVersion: $('footerVersion'),
 };
+
+/* extra tooltips for controls without a data-tip attribute in the HTML */
+const EXTRA_TIPS = {
+  browseBtn: 'Open a folder picker and use the chosen folder as the download destination.',
+  subject: 'Optional: only keep sessions whose subject name contains this text.',
+  dir: 'Where the recordings and files are saved. Each video gets its own file here.',
+  max: 'Cap how many recordings to download per run. Empty means no limit.',
+  channel: 'Which browser the bot drives. Use the same one you log into the portal with.',
+  dryRun: 'Preview only: scan and show what would download, but save nothing.',
+  headless: 'Run the browser without a visible window after the first login is saved.',
+  noAudit: 'Skip the portal audit call for faster runs on flaky connections.',
+  fallbackRecording: 'If a download button is missing, try grabbing the recording URL directly.',
+  ytdlp: 'Use yt-dlp as a fallback for embedded videos (Vimeo / YouTube) that have no direct file.',
+  scheduleSelectAll: 'Tick every recording that is ready to download.',
+  filesSelectAll: 'Tick every file in the list.',
+  clearLog: 'Empty the live log below.',
+  hintClose: 'Dismiss the quick-start tutorial.',
+  cancelBtn: 'Stop after the current file finishes. Downloads already saved stay saved.',
+};
+
+function initTooltips() {
+  for (const [id, tip] of Object.entries(EXTRA_TIPS)) {
+    const el = $(id);
+    if (el && !el.dataset.tip) el.setAttribute('data-tip', tip);
+  }
+  // checkbox labels are the hover targets (the tiny input itself is too small)
+  for (const lbl of document.querySelectorAll('.check')) {
+    const input = lbl.querySelector('input');
+    if (input && !lbl.dataset.tip) lbl.setAttribute('data-tip', EXTRA_TIPS[input.id] || '');
+  }
+}
 
 const state = { running: false, rows: new Map(), files: new Map(), logLines: [], filter: 'all', runProgress: { done: 0, total: 0 } };
 
@@ -552,14 +583,20 @@ function init() {
     .catch(() => {});
 
   // dismissible quick-start hint (remembered between sessions)
-  if (localStorage.getItem('myaie-hint') === '1') {
+  const hideHint = () => {
     els.hint.style.display = 'none';
-  } else {
-    els.hintClose.addEventListener('click', () => {
-      els.hint.style.display = 'none';
-      localStorage.setItem('myaie-hint', '1');
-    });
-  }
+    localStorage.setItem('myaie-hint', '1');
+  };
+  els.hintClose.addEventListener('click', hideHint);
+  els.hintGotIt.addEventListener('click', hideHint);
+  if (localStorage.getItem('myaie-hint') === '1') els.hint.style.display = 'none';
+  els.showTips.addEventListener('click', () => {
+    els.hint.style.display = '';
+    localStorage.removeItem('myaie-hint');
+    toast('Quick-start tips are back in the corner.');
+  });
+
+  initTooltips();
 
   clearLog();
 

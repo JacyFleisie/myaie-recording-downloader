@@ -9,6 +9,7 @@
  *   npm run desktop:smoke    headless self-check (starts server, hits /api/status, exits)
  */
 import { app, BrowserWindow, dialog, shell } from 'electron';
+import path from 'node:path';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater as { autoUpdater: import('electron-updater').AppUpdater };
 import { startServer } from '../gui-server.ts';
@@ -31,6 +32,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 620,
     title: 'myAIE Lecture Downloader',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
     backgroundColor: '#0b1120',
     webPreferences: {

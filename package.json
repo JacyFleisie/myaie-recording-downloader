@@ -1,6 +1,6 @@
 {
   "name": "myaie-recording-downloader",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Automates the myAIE student portal: iterates the calendar schedule for a date range and downloads past live lecture recordings using your real Chrome session.",
   "type": "module",
@@ -39,13 +39,15 @@
       "gui-server.ts",
       "myaie-bot.ts",
       "yt-dlp.exe",
-      "package.json"
+      "package.json",
+      "build/icon.png"
     ],
     "asarUnpack": [
       "yt-dlp.exe"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

@@ -24,6 +24,7 @@
     </div>
   </div>
   <div class="topbar-right">
+    <button id="showTips" type="button" data-tip="Re-open the quick-start tutorial in the corner.">&#10067; Show tips</button>
     <span class="ver-chip" id="appVersion" title="App version">v—</span>
     <div class="status-pill" id="statusPill" role="status" aria-live="polite" aria-label="Bot status">
       <span class="dot" id="statusDot"></span>
@@ -42,11 +43,12 @@
         <button id="hintClose" class="hint-close" type="button" aria-label="Dismiss quick-start tips">&#10005;</button>
       </div>
       <ol class="hint-steps">
-        <li><b>Pick a date range</b> — the recordings window you care about.</li>
-        <li><b>Find recordings</b> — the bot lists everything it detects with a Download button.</li>
-        <li><b>Tick the ones you want</b> (or select all) and hit <b>Download selected</b>.</li>
-        <li><b>News room files</b> — <b>Find news room files</b> lists attachments (PDF/PPTX/DOCX); tick and download the same way.</li>
+        <li><span class="step-num" aria-hidden="true">1</span><div><b>Pick a date range</b><span class="step-sub">the recordings window you care about</span></div></li>
+        <li><span class="step-num" aria-hidden="true">2</span><div><b>Find recordings</b><span class="step-sub">lists everything with a Download button</span></div></li>
+        <li><span class="step-num" aria-hidden="true">3</span><div><b>Tick &amp; download</b><span class="step-sub">select the classes you want, hit <b>Download selected</b></span></div></li>
+        <li><span class="step-num" aria-hidden="true">4</span><div><b>News room files</b><span class="step-sub">PDF/PPTX/DOCX attachments — tick &amp; download the same way</span></div></li>
       </ol>
+      <button id="hintGotIt" class="btn btn-ghost btn-sm" type="button">Got it &mdash; hide</button>
     </section>
 
     <section class="card">
@@ -54,11 +56,11 @@
 
       <div class="field">
         <label for="from">Date from</label>
-        <input type="date" id="from">
+        <input type="date" id="from" data-tip="Start of the recordings window - only sessions from this date onward are scanned.">
       </div>
       <div class="field">
         <label for="to">Date to</label>
-        <input type="date" id="to">
+        <input type="date" id="to" data-tip="End of the recordings window - sessions after this date are ignored.">
       </div>
       <div class="presets" role="group" aria-label="Quick date ranges">
         <button class="preset" data-days="7" aria-label="Set date range to the last 7 days">7 days</button>
@@ -103,11 +105,11 @@
       </div>
 
       <div class="actions">
-        <button id="scanBtn" class="btn btn-primary" type="button" aria-label="Find recordings: scan the calendar and list what is downloadable"><span class="icon">&#128269;</span> Find recordings</button>
-        <button id="dlSelBtn" class="btn btn-accent" type="button" disabled aria-label="Download the selected recordings"><span class="icon">&#11015;</span> Download selected</button>
-        <button id="scanFilesBtn" class="btn btn-ghost" type="button" aria-label="Scan the news room feeds for downloadable files"><span class="icon">&#128193;</span> Find news room files</button>
-        <button id="dlFilesBtn" class="btn btn-ghost" type="button" disabled aria-label="Download the selected news room files"><span class="icon">&#11015;</span> Download files</button>
-        <button id="cancelBtn" class="btn btn-danger" type="button" disabled aria-label="Stop the current run">Stop</button>
+        <button id="scanBtn" class="btn btn-primary" type="button" aria-label="Find recordings: scan the calendar and list what is downloadable" data-tip="Scan the calendar for the chosen range and list every session that has a download button. Nothing is downloaded yet."><span class="icon">&#128269;</span> Find recordings</button>
+        <button id="dlSelBtn" class="btn btn-accent" type="button" disabled aria-label="Download the selected recordings" data-tip="Download only the recordings you ticked (or select all with the checkbox in the table header)."><span class="icon">&#11015;</span> Download selected</button>
+        <button id="scanFilesBtn" class="btn btn-ghost" type="button" aria-label="Scan the news room feeds for downloadable files" data-tip="Scan every subject's News Room for file attachments (PDF, PPTX, DOCX...) in the date range and list them below."><span class="icon">&#128193;</span> Find news room files</button>
+        <button id="dlFilesBtn" class="btn btn-ghost" type="button" disabled aria-label="Download the selected news room files" data-tip="Download the news room files you ticked into the download folder."><span class="icon">&#11015;</span> Download files</button>
+        <button id="cancelBtn" class="btn btn-danger" type="button" disabled aria-label="Stop the current run" data-tip="Stop after the current file finishes. Downloads already saved stay saved.">Stop</button>
       </div>
     </section>
 
