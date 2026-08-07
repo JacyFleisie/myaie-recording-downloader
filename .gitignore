@@ -9,3 +9,6 @@ yt-dlp.exe
 
 # Freebuff workspace metadata
 .freebuff/
+
+# Electron build output
+dist/

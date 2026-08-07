@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { exec } from 'node:child_process';
 import { connect as netConnect } from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildConfig, dateStr, runBot } from './bot-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -356,10 +356,20 @@ function openBrowser(url) {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-async function boot() {
+// Boot — shared by the CLI (`node gui-server.mjs`) and the Electron app
+// ---------------------------------------------------------------------------
+export function getStatusSnapshot() {
+  return { state, statusText, settings };
+}
+
+export async function startServer({ autoOpenBrowser = true } = {}) {
   const port = await pickPort();
-  server.listen(port, HOST, () => {
-    const url = `http://${HOST}:${port}/`;
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, HOST, resolve);
+  });
+  const url = `http://${HOST}:${port}/`;
+  if (autoOpenBrowser) {
     console.log('┌────────────────────────────────────────────────────────────┐');
     console.log('│  myAIE Lecture Recording Downloader — dashboard            │');
     console.log('└────────────────────────────────────────────────────────────┘');
@@ -367,19 +377,32 @@ async function boot() {
     console.log(`  Runs save to:  ${settings.dir}`);
     console.log('  Press Ctrl+C to stop the dashboard.');
     openBrowser(url);
-  });
+  } else {
+    console.log(`[gui-server] dashboard on ${url}`);
+  }
+  return {
+    server,
+    port,
+    url,
+    close: () => new Promise((resolve) => {
+      clearInterval(heartbeat);
+      server.close(() => resolve());
+    }),
+  };
 }
 
-boot().catch((e) => {
-  console.error('Failed to start dashboard:', e.message);
-  process.exit(1);
-});
-
-// graceful shutdown
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    clearInterval(heartbeat);
-    console.log('\nShutting down…');
-    process.exit(0);
+// CLI entry point: only when this file is executed directly.
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  startServer().catch((e) => {
+    console.error('Failed to start dashboard:', e.message);
+    process.exit(1);
   });
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      clearInterval(heartbeat);
+      console.log('\nShutting down…');
+      process.exit(0);
+    });
+  }
 }

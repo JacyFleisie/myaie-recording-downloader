@@ -7,12 +7,16 @@ calendar schedule, finds past live lecture recordings within a date range you
 choose, and downloads them as MP4 files — using your own logged-in Chrome
 session, so no credentials are ever stored.
 
-Two ways to run it:
+Three ways to run it:
 
-- **`npm run gui`** — a professional web dashboard with date pickers, a download
-  folder picker, a live log of everything the bot detects and does, a schedule
-  table and a run summary.
-- **`node myaie-bot.mjs ...`** — the original CLI (all flags still work).
+- **`npm run desktop`** — a dedicated **desktop app** (Electron): the dashboard
+  in a native window, single instance, installable via `npm run desktop:build`.
+- **`npm run gui`** — the same dashboard in your browser: date pickers, a
+  download folder picker, a live log of everything the bot detects and does, a
+  schedule table and a run summary.
+- **`node myaie-bot.mjs ...`** — the CLI (all flags still work).
+
+Want the story behind it? Read the [case study](docs/CASE_STUDY.md).
 
 ## How it works
 
@@ -41,6 +45,8 @@ Already-downloaded files are skipped on reruns.
   `--channel edge`)
 
 No extra browser download is needed — the bot drives your installed Chrome.
+For the desktop app you also need Node 18+ (`npm install` once, then
+`npm run desktop`).
 
 ## Install
 

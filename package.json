@@ -8,7 +8,10 @@
     "start": "node myaie-bot.mjs",
     "gui": "node gui-server.mjs",
     "selftest": "node myaie-bot.mjs --selftest",
-    "help": "node myaie-bot.mjs --help"
+    "help": "node myaie-bot.mjs --help",
+    "desktop": "electron .",
+    "desktop:smoke": "electron . --smoke",
+    "desktop:build": "electron-builder --win"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -16,5 +19,35 @@
   "dependencies": {
     "playwright-core": "^1.49.0"
   },
-  "author": "JacyFleisie <jacyreyneke3@gmail.com>"
+  "author": "JacyFleisie <jacyreyneke3@gmail.com>",
+  "main": "electron/main.mjs",
+  "devDependencies": {
+    "electron": "^38.8.6",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.jacyfleisie.myaie-recording-downloader",
+    "productName": "myAIE Lecture Downloader",
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "bot-core.mjs",
+      "gui-server.mjs",
+      "myaie-bot.mjs",
+      "yt-dlp.exe",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "yt-dlp.exe"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
 }
