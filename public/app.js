@@ -95,6 +95,7 @@ function clearLog() {
 function resetProgress() {
   state.runProgress = { done: 0, total: 0 };
   els.runProgressBar.style.width = '0%';
+  els.runProgressBar.setAttribute('aria-valuenow', '0');
   els.runProgressText.textContent = '0%';
   els.runProgress.hidden = true;
 }
@@ -109,6 +110,7 @@ function updateProgress() {
   if (!total) return;
   const pct = Math.min(100, Math.round((done / total) * 100));
   els.runProgressBar.style.width = pct + '%';
+  els.runProgressBar.setAttribute('aria-valuenow', String(pct));
   els.runProgressText.textContent = pct + '%';
   els.runProgress.hidden = false;
 }

@@ -60,7 +60,7 @@ function setupAutoUpdates(): void {
 
   autoUpdater.on('update-available', () => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    if (!win) return;
+    if (!win) { autoUpdater.downloadUpdate(); return; } // no window — just fetch it
     void dialog.showMessageBox(win, {
       type: 'info',
       title: 'Update available',

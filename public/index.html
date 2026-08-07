@@ -24,7 +24,7 @@
     </div>
   </div>
   <div class="topbar-right">
-    <span class="ver-chip" id="appVersion" title="App version">v1.0.0</span>
+    <span class="ver-chip" id="appVersion" title="App version">v—</span>
     <div class="status-pill" id="statusPill" role="status" aria-live="polite" aria-label="Bot status">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">Ready</span>
@@ -110,7 +110,7 @@
     <section class="card stats-card">
       <h2>Run summary</h2>
       <div class="progress" id="runProgress" hidden>
-        <div class="progress-bar" id="runProgressBar"></div>
+        <div class="progress-bar" id="runProgressBar" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
         <span class="progress-text" id="runProgressText">0%</span>
       </div>
       <div class="stats" aria-live="polite" aria-label="Run summary">

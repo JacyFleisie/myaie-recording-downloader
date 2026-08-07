@@ -32,7 +32,11 @@ jobs:
         shell: bash
         run: |
           if [ ! -f yt-dlp.exe ]; then
-            curl -sL -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+            curl -sfL -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          fi
+          # a 404 page would silently package as yt-dlp.exe — make sure it is a real binary
+          if [ ! -s yt-dlp.exe ] || head -c 2 yt-dlp.exe | grep -q 'MZ'; then :; else
+            echo "yt-dlp.exe is not a valid Windows binary" >&2; exit 1
           fi
 
       - name: Typecheck
