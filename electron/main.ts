@@ -9,6 +9,8 @@
  *   npm run desktop:smoke    headless self-check (starts server, hits /api/status, exits)
  */
 import { app, BrowserWindow, dialog, shell } from 'electron';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater as { autoUpdater: import('electron-updater').AppUpdater };
 import { startServer } from '../gui-server.ts';
 
 type ServerHandle = Awaited<ReturnType<typeof startServer>>;
@@ -46,6 +48,56 @@ function createWindow(): void {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// ---------------------------------------------------------------------------
+// Auto-updates (packaged app only): silently checks GitHub Releases on startup,
+// asks before downloading, and offers to restart once the new build is ready.
+// ---------------------------------------------------------------------------
+function setupAutoUpdates(): void {
+  if (!app.isPackaged) return; // dev mode: updates only make sense in the installed app
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', () => {
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    void dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update available',
+      message: 'A new version of myAIE Lecture Downloader is available.',
+      detail: 'Download it now? You can keep using the app while it downloads.',
+      buttons: ['Download update', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.downloadUpdate();
+    });
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    void dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update ready',
+      message: 'The new version is downloaded and ready to install.',
+      detail: 'Restart now to finish the update.',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    // Network / no-release-yet failures are non-fatal — keep the app usable.
+    console.warn('Update check failed:', err.message);
+  });
+
+  autoUpdater.checkForUpdates().catch(() => { /* offline or no release yet — fine */ });
+}
+
 // Single instance: two windows would fight over the same settings/dashboard port.
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -73,6 +125,7 @@ if (!gotLock) {
       }
       await startEmbeddedServer();
       createWindow();
+      setupAutoUpdates();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Failed to start:', msg);

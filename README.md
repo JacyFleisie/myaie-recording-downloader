@@ -1,93 +1,106 @@
-# myAIE Lecture Downloader
+# 🎓 myAIE Lecture Downloader
 
-**Built by [JacyFleisie](https://github.com/JacyFleisie)** — a student project automating my own lecture-recordings backlog.
+**Built by [JacyFleisie](https://github.com/JacyFleisie)**
 
-Automates the **myAIE Student Portal** (`https://student.myaie.ac`): it scans your
-calendar schedule, finds past live lecture recordings within a date range you
-choose, and downloads them as MP4 files — using your own logged-in Chrome
-session, so no credentials are ever stored.
+[![Release](https://img.shields.io/github/v/release/JacyFleisie/myaie-recording-downloader?label=Latest%20release&color=4f46e5)](https://github.com/JacyFleisie/myaie-recording-downloader/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/JacyFleisie/myaie-recording-downloader/release.yml?branch=main&label=Build)](https://github.com/JacyFleisie/myaie-recording-downloader/actions)
+[![Node](https://img.shields.io/badge/Node-22.18%2B-339933)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](https://www.typescriptlang.org)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Three ways to run it:
+> A desktop app that downloads your past live **lecture recordings** from the
+> myAIE Student Portal — automatically. Pick a date range, and it works through
+> your calendar schedule, finds every recording that has a download button, and
+> saves the MP4s to a folder you choose. It drives **your own logged-in Chrome
+> session**, so no passwords are ever stored.
 
-- **`npm run desktop`** — a dedicated **desktop app** (Electron): the dashboard
-  in a native window, single instance, installable via `npm run desktop:build`.
-- **`npm run gui`** — the same dashboard in your browser: date pickers, a
-  download folder picker, a live log of everything the bot detects and does, a
-  schedule table and a run summary.
-- **`node myaie-bot.ts ...`** — the CLI (all flags still work).
+## ⬇️ Download the app
 
-Want the story behind it? Read the [case study](docs/CASE_STUDY.md).
+**Windows users — no Node, no terminal, nothing else needed:**
 
-## How it works
+[![Download for Windows](https://img.shields.io/badge/⬇%20Download%20for%20Windows-4f46e5?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/JacyFleisie/myaie-recording-downloader/releases/latest)
+
+1. Open the [latest release](https://github.com/JacyFleisie/myaie-recording-downloader/releases/latest) on GitHub.
+2. Download **`myAIE Lecture Downloader Setup <version>.exe`**.
+3. Run the installer and pick any install folder.
+4. Launch **myAIE Lecture Downloader** from the Start menu — done.
+
+The app **updates itself**: whenever a new version is published here on GitHub,
+it silently checks on startup and offers to download + install the update. You
+get new features without ever re-downloading an installer.
+
+## ✨ What it does
+
+- **Scans your calendar schedule** for a date range you choose (7d / 30d / 90d /
+  6mo presets, or any custom range) and lists every recorded session.
+- **Downloads the recordings** as MP4s to a folder you pick — including
+  embedded Vimeo/YouTube videos (via a bundled yt-dlp with your session's
+  cookies), so nothing is missed.
+- **Live dashboard** — a real-time log of everything the bot detects and does,
+  a schedule table with status chips (Download ready / Recording pending /
+  Saved…), and a run summary. Accessible by keyboard and screen reader.
+- **Resumes cleanly** — already-downloaded files are skipped on reruns, and
+  your settings persist between sessions.
+- **Your login stays private** — it reuses your real Chrome profile; you log in
+  once (like on the website) and your session is reused, never stored or shared.
+
+## 🚀 Quick start (for developers)
+
+```bash
+npm install            # install dependencies
+npm run desktop        # launch the desktop app (Electron)
+npm run gui            # …or the same dashboard in your browser
+node myaie-bot.ts --help   # …or the CLI
+```
+
+Requires **Node.js 22.18+** and **Google Chrome** (or Edge) installed.
+
+## 🧠 How it works
 
 The portal's frontend was reverse-engineered from its own JavaScript bundles:
 
 1. `GET /getAllSubjectCalendar` returns your **subjects** (e.g. `DPOA101 …`).
-2. Each subject has a paginated **class feed**
-   (`GET /getPostFeedMessagesPaginateTz?room_id=<subject>&user_id=<you>`), whose
-   items carry a `ClassArray` — one entry per live session with `class_date`,
-   `isRecorded`, `isRecordingAvailable` and a `recordings` HTML string.
+2. Each subject has a paginated **class feed** whose items carry a `ClassArray`
+   — one entry per live session with `class_date`, `isRecorded`,
+   `isRecordingAvailable` and a `recordings` HTML string.
 3. Most sessions have **no `downloadURL` field** — the portal renders the
    "Download" button into that `recordings` HTML (a `url="…"` attribute pointing
    at `playback.myaie.ac/presentation_video/<meeting>/video.mp4`). The bot parses
-   exactly what the portal page shows, so a session is "Download ready" precisely
-   when you would see a Download button on the site. It then fetches the file
-   (same `saveRecordingAction` audit call the portal fires) and saves it.
+   exactly what the portal page shows, so a session is "Download ready"
+   precisely when you'd see a Download button on the site.
 
-Downloads go through the browser download engine with a cookie-authenticated
-streaming fallback, and files land as `YYYY-MM-DD_Subject_classId.mp4`.
-Already-downloaded files are skipped on reruns.
+Downloads use a three-tier fallback chain — the browser download engine → a
+cookie-authenticated streaming download → **yt-dlp** (which also handles
+embedded Vimeo/YouTube with your exported session cookies). Files land as
+`YYYY-MM-DD_Subject_classId.mp4`.
 
-## Requirements
+Want the full story? Read the [case study](docs/CASE_STUDY.md).
 
-- **Node.js 22.18+** (Node 24 works)
-- **Google Chrome** installed (or Microsoft Edge — pick it in the GUI / use
-  `--channel edge`)
-
-No extra browser download is needed — the bot drives your installed Chrome.
-For the desktop app you also need Node 22.18+ (`npm install` once, then
-`npm run desktop`).
-
-## Install
+## 🖥️ Building the installer
 
 ```bash
-npm install
+npm run desktop:build     # produces dist\myAIE Lecture Downloader Setup x.y.z.exe
 ```
 
-## GUI (recommended)
+## 📁 Project layout
+
+```
+electron/main.ts     Electron desktop wrapper (native window, auto-updates)
+gui-server.ts        Zero-framework HTTP + SSE dashboard server
+bot-core.ts          The automation engine (Playwright, download chain)
+myaie-bot.ts         CLI entry point
+public/              Dashboard UI (HTML/CSS/JS, accessible)
+docs/CASE_STUDY.md   The story behind the project
+```
+
+## 🧪 Tests & checks
 
 ```bash
-npm run gui
+npm run selftest     # engine self-test (real captured portal data)
+npm run typecheck    # strict TypeScript, no build step (native type stripping)
 ```
 
-A browser tab opens the dashboard at `http://127.0.0.1:3801`:
-
-- **Date from / to** — the recording range (with 7d/30d/90d/6mo presets)
-- **Subject filter** — optional, e.g. `Computer Networks`
-- **Download folder** — type a path or click **Browse…** for a native Windows
-  folder dialog
-- **Options** — dry run (preview only), headless (no window after first login),
-  skip audit call, use recording URL as fallback, **use yt-dlp for embedded
-  videos (Vimeo / YouTube)**, max videos, browser channel
-- **Start download / Stop** — run and cancel; the bot opens the portal and waits
-  if you need to log in (once; the session persists in `./chrome-profile`)
-- **Detected schedule** — every session in range with a status chip that updates
-  live (Download ready / Recording pending / Not recorded / Downloading… / Saved)
-- **Live log** — everything the bot does and detects, color-coded, filterable by
-  level (All / Info / Warnings / Errors), with auto-scroll
-- **Run summary** — downloaded / skipped / failed / pending counters
-
-Your settings persist between sessions (`gui-settings.json`), and every run is
-appended to `bot-run.log`.
-
-## CLI
-
-```bash
-node myaie-bot.ts --from 2026-06-01 --to 2026-07-31            # download the range
-node myaie-bot.ts --from 2026-06-01 --subject "Networks" --dry-run   # preview
-node myaie-bot.ts --inspect                                   # dump raw data
-node myaie-bot.ts --selftest                                  # verify install
-```
+## 🔧 CLI reference
 
 | Option | Meaning |
 |---|---|
@@ -96,63 +109,30 @@ node myaie-bot.ts --selftest                                  # verify install
 | `--max <n>` | at most n downloads this run |
 | `--dir <folder>` | save folder (default `./downloads`) |
 | `--dry-run` | list what would download; download nothing |
-| `--inspect` | dump raw class sessions to `calendar_dump.json` |
 | `--headless` | invisible Chrome (after logging in once) |
 | `--no-audit` | skip the portal's audit call |
 | `--fallback-recording` | use `recordingURL` when `downloadURL` is missing |
-| `--yt-dlp` | download embedded recordings (Vimeo/YouTube) with yt-dlp; also tried if a direct download fails |
-| `--yt-dlp-path <path>` | yt-dlp executable (default: `./yt-dlp.exe`, else `yt-dlp` on PATH) |
-| `--yt-dlp-timeout <sec>` | max seconds per yt-dlp download (default 1200) |
-| `--profile <folder>` | Chrome profile (default `./chrome-profile`) |
-| `--channel <chrome\|edge>` / `--executable-path` | browser selection |
+| `--yt-dlp` | use yt-dlp for embedded videos (Vimeo/YouTube); also a fallback for failed direct downloads |
+| `--yt-dlp-path <path>` | yt-dlp executable (default: bundled `./yt-dlp.exe`) |
+| `--channel <chrome\|edge>` | browser selection |
 | `--login-timeout <sec>` | how long to wait for manual login (default 300) |
 
-## Embedded recordings (Vimeo / YouTube)
+## 🛠 Troubleshooting
 
-Most portal recordings are direct MP4 links on `playback.myaie.ac` and need no
-special tooling. A few are embedded player pages (`player.vimeo.com`, YouTube)
-— those can only be fetched with **yt-dlp**. Tick "Use yt-dlp for embedded
-videos" in the GUI (or pass `--yt-dlp`). The bot then:
-
-1. detects embedded URLs and hands them to yt-dlp, and
-2. exports your browser session's cookies (Netscape format, written to a temp
-   file and deleted afterwards) so private/unlisted videos resolve exactly like
-   your logged-in browser, and
-3. falls back to yt-dlp even for direct links when the normal download fails.
-
-A portable `yt-dlp.exe` ships in the project folder. It is not tracked by git
-(`.gitignore`), so if you clone this repo elsewhere, reinstall it:
-
-```bash
-# either drop the latest release here (https://github.com/yt-dlp/yt-dlp/releases)
-curl -L -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
-# or install the Python package (then the bot finds it on PATH)
-pip install -U yt-dlp
-```
-
-> **Note:** on some networks public Vimeo/YouTube extraction is blocked at the
-> network level (e.g. Vimeo 401s on its OAuth step, YouTube reports videos as
-> unavailable even for known-good URLs). That is not a bot bug — if embeds fail
-> to download from your network, a VPN/proxy usually fixes it. Direct MP4
-> downloads from the portal are unaffected.
-
-## Troubleshooting
-
-- **"Failed to launch Chrome"** → try `--channel edge` or set the executable with
-  `--executable-path "C:\Program Files\Google\Chrome\Application\chrome.exe"`.
+- **"Failed to launch Chrome"** → try `--channel edge` or set the executable
+  with `--executable-path "C:\Program Files\Google\Chrome\Application\chrome.exe"`.
 - **Login timeout** → finish logging in within the window, or raise
   `--login-timeout`; your session persists in `./chrome-profile` afterwards.
 - **HTTP 401/403** → session expired; log in again in the opened browser.
 - **Download failed / 403** → the recording's signed URL may have expired; rerun
   (already-downloaded files are skipped).
-- **Embedded video won't download** → see the yt-dlp section above; if it's a
-  network block (Vimeo 401 / YouTube "Video unavailable"), try a VPN.
-- **Dashboard port busy** → it auto-picks a free port in 3801–3820 (set `PORT`
-  to pin one).
+- **Embedded video won't download** → see the yt-dlp note in the docs; on some
+  networks Vimeo/YouTube are blocked at the network level (a VPN fixes it).
+- **Dashboard port busy** → it auto-picks a free port in 3801–3820 (set `PORT`).
 
-## Notes
+## 📜 Notes
 
 - Personal use on your own account — respect your institution's policies on
   downloading lecture recordings.
-- "Recording pending" means the portal recorded the class but the download
-  isn't published yet (or only "Watch" is available); rerun later to pick it up.
+- "Recording pending" means the portal recorded the class but the download isn't
+  published yet; rerun later to pick it up.

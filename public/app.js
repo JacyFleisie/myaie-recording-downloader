@@ -13,9 +13,12 @@ const els = {
   logBox: $('logBox'), clearLog: $('clearLog'), logFilter: $('logFilter'),
   toast: $('toast'),
   statDown: $('statDown'), statSkip: $('statSkip'), statFail: $('statFail'), statPending: $('statPending'),
+  runProgress: $('runProgress'), runProgressBar: $('runProgressBar'), runProgressText: $('runProgressText'),
+  hint: $('hint'), hintClose: $('hintClose'),
+  appVersion: $('appVersion'), footerVersion: $('footerVersion'),
 };
 
-const state = { running: false, rows: new Map(), logLines: [], filter: 'all' };
+const state = { running: false, rows: new Map(), logLines: [], filter: 'all', runProgress: { done: 0, total: 0 } };
 
 /* ---------------- toast ---------------- */
 let toastTimer = null;
@@ -86,6 +89,28 @@ function clearLog() {
   ph.className = 'log-placeholder';
   ph.textContent = 'Log cleared — next run will appear here.';
   els.logBox.appendChild(ph);
+}
+
+/* ---------------- run progress ---------------- */
+function resetProgress() {
+  state.runProgress = { done: 0, total: 0 };
+  els.runProgressBar.style.width = '0%';
+  els.runProgressText.textContent = '0%';
+  els.runProgress.hidden = true;
+}
+
+function setProgressTotal(rows) {
+  state.runProgress.total = rows.filter((r) => r.status === 'ready').length;
+  updateProgress();
+}
+
+function updateProgress() {
+  const { done, total } = state.runProgress;
+  if (!total) return;
+  const pct = Math.min(100, Math.round((done / total) * 100));
+  els.runProgressBar.style.width = pct + '%';
+  els.runProgressText.textContent = pct + '%';
+  els.runProgress.hidden = false;
 }
 
 /* ---------------- schedule table ---------------- */
@@ -159,6 +184,10 @@ function handleItem(it) {
   if (!fmt) return;
   const upd = fmt(it);
   updateRow(key, upd);
+  if (it.kind === 'downloaded' || it.kind === 'failed' || it.kind === 'skipped') {
+    state.runProgress.done++;
+    updateProgress();
+  }
 }
 
 /* ---------------- status / controls ---------------- */
@@ -188,6 +217,7 @@ function setStats(s) {
 }
 
 function resetRunView() {
+  resetProgress();
   els.scheduleBody.innerHTML = '';
   state.rows.clear();
   els.scheduleEmpty.textContent = 'Running… waiting for the calendar.';
@@ -226,6 +256,7 @@ function connect() {
         break;
       case 'schedule':
         renderSchedule(evt.rows);
+        setProgressTotal(evt.rows);
         break;
       case 'item':
         handleItem(evt.item);
@@ -350,11 +381,28 @@ async function cancelRun() {
 
 /* ---------------- init ---------------- */
 function init() {
-  // load persisted settings
+  // load persisted settings + version
   fetch('/api/config')
     .then((r) => r.json())
-    .then((d) => populate(d.settings))
+    .then((d) => {
+      populate(d.settings);
+      if (d.version) {
+        const v = 'v' + d.version;
+        els.appVersion.textContent = v;
+        els.footerVersion.textContent = v;
+      }
+    })
     .catch(() => {});
+
+  // dismissible quick-start hint (remembered between sessions)
+  if (localStorage.getItem('myaie-hint') === '1') {
+    els.hint.style.display = 'none';
+  } else {
+    els.hintClose.addEventListener('click', () => {
+      els.hint.style.display = 'none';
+      localStorage.setItem('myaie-hint', '1');
+    });
+  }
 
   clearLog();
 

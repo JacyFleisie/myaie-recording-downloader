@@ -28,6 +28,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SETTINGS_FILE = path.join(__dirname, 'gui-settings.json');
 const RUN_LOG_FILE = path.join(__dirname, 'bot-run.log');
+const APP_VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || '0.0.0'; }
+  catch { return '0.0.0'; }
+})();
 const HOST = '127.0.0.1';
 
 interface Settings {
@@ -307,7 +311,7 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
 
   if (p === '/api/events') { handleSse(req, res); return; }
   if (p === '/api/status') { sendJson(res, 200, { state, statusText, settings }); return; }
-  if (p === '/api/config') { sendJson(res, 200, { settings }); return; }
+  if (p === '/api/config') { sendJson(res, 200, { settings, version: APP_VERSION }); return; }
 
   if (req.method === 'POST') {
     const body = await readBody(req);

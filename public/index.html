@@ -24,6 +24,7 @@
     </div>
   </div>
   <div class="topbar-right">
+    <span class="ver-chip" id="appVersion" title="App version">v1.0.0</span>
     <div class="status-pill" id="statusPill" role="status" aria-live="polite" aria-label="Bot status">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">Ready</span>
@@ -35,6 +36,18 @@
 <main class="layout" id="main">
 
   <aside class="sidebar">
+    <section class="hint" id="hint" aria-label="How to use this app">
+      <div class="hint-head">
+        <span class="hint-badge">Quick start</span>
+        <button id="hintClose" class="hint-close" type="button" aria-label="Dismiss quick-start tips">&#10005;</button>
+      </div>
+      <ol class="hint-steps">
+        <li><b>Pick a date range</b> — the recordings window you care about.</li>
+        <li><b>Choose a download folder</b> — where the videos land.</li>
+        <li><b>Hit Start</b> — log in once in the Chrome window that opens; the bot handles the rest.</li>
+      </ol>
+    </section>
+
     <section class="card">
       <h2>Run configuration</h2>
 
@@ -96,6 +109,10 @@
 
     <section class="card stats-card">
       <h2>Run summary</h2>
+      <div class="progress" id="runProgress" hidden>
+        <div class="progress-bar" id="runProgressBar"></div>
+        <span class="progress-text" id="runProgressText">0%</span>
+      </div>
       <div class="stats" aria-live="polite" aria-label="Run summary">
         <div class="stat"><span class="stat-num ok" id="statDown">0</span><span class="stat-label">Downloaded</span></div>
         <div class="stat"><span class="stat-num warn" id="statSkip">0</span><span class="stat-label">Skipped</span></div>
@@ -111,6 +128,13 @@
         <h2>Detected schedule</h2>
         <span class="count" id="scheduleCount" aria-live="polite">no data yet</span>
       </div>
+      <ul class="legend" aria-label="Recording status legend">
+        <li><span class="lg lg-ready"></span>Download ready</li>
+        <li><span class="lg lg-pending"></span>Recording pending</li>
+        <li><span class="lg lg-none"></span>Not recorded</li>
+        <li><span class="lg lg-done"></span>Saved</li>
+        <li><span class="lg lg-fail"></span>Failed</li>
+      </ul>
       <div class="table-wrap">
         <table id="scheduleTable">
           <caption class="sr-only">Detected schedule</caption>
@@ -142,7 +166,7 @@
 
 </main>
 
-<footer class="app-footer">Built with &hearts; by <a href="https://github.com/JacyFleisie" target="_blank" rel="noopener">JacyFleisie</a></footer>
+<footer class="app-footer">Built with &hearts; by <a href="https://github.com/JacyFleisie" target="_blank" rel="noopener">JacyFleisie</a> &middot; <span id="footerVersion">v1.0.0</span></footer>
 
 <div id="toast" class="toast" role="status"></div>
 <script src="/app.js"></script>
