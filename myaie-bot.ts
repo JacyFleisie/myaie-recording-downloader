@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 /**
- * myaie-bot.mjs — CLI for the myAIE lecture-recording downloader.
- * Thin wrapper around bot-core.mjs. Run `node myaie-bot.mjs --help`.
+ * myaie-bot.ts — CLI for the myAIE lecture-recording downloader.
+ * Thin wrapper around bot-core.ts. Run `node myaie-bot.ts --help`.
+ * Runs directly on Node 24+ (type stripping); `tsc --noEmit` typechecks.
  */
 
 import { parseArgs } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildConfig, runBot, runSelftest, shortUrl } from './bot-core.mjs';
+import { buildConfig, runBot, runSelftest, shortUrl, type LogLevel, type ScheduleRow } from './bot-core.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function usage() {
+function usage(): string {
   return `
 myAIE Student Portal — lecture recording downloader
 
 USAGE
-  node myaie-bot.mjs [options]
+  node myaie-bot.ts [options]
 
 OPTIONS
   --from <YYYY-MM-DD>       Start of date range (default: 90 days ago)
@@ -44,15 +45,14 @@ OPTIONS
   -h, --help                Show this help
 
 EXAMPLES
-  node myaie-bot.mjs --from 2026-06-01 --to 2026-07-31
-  node myaie-bot.mjs --from 2026-06-01 --subject "Computer Networks" --dry-run
-  node myaie-bot.mjs --from 2026-01-01 --to 2026-12-31 --max 10
+  node myaie-bot.ts --from 2026-06-01 --to 2026-07-31
+  node myaie-bot.ts --from 2026-06-01 --subject "Computer Networks" --dry-run
+  node myaie-bot.ts --from 2026-01-01 --to 2026-12-31 --max 10
 
 GUI
-  node gui-server.mjs       Launch the professional web dashboard instead.
+  node gui-server.ts        Launch the professional web dashboard instead.
 `;
 }
-
 function parseCliArgs() {
   const { values } = parseArgs({
     options: {
@@ -104,19 +104,19 @@ function parseCliArgs() {
   };
 }
 
-function makeConsoleLog(verbose) {
-  const out = (prefix, color, msg) => console.log(`${color}${prefix}\x1b[0m`, msg);
+function makeConsoleLog(verbose: boolean) {
+  const out = (prefix: string, color: string, msg: string) => console.log(`${color}${prefix}\x1b[0m`, msg);
   return {
-    info: (msg) => out('[i]', '\x1b[36m', msg),
-    ok: (msg) => out('[+]', '\x1b[32m', msg),
-    warn: (msg) => out('[!]', '\x1b[33m', msg),
-    err: (msg) => out('[-]', '\x1b[31m', msg),
-    step: (msg) => out('[*]', '\x1b[35m', msg),
-    debug: (msg) => { if (verbose) console.log('[debug]', msg); },
+    info: (msg: string) => out('[i]', '\x1b[36m', msg),
+    ok: (msg: string) => out('[+]', '\x1b[32m', msg),
+    warn: (msg: string) => out('[!]', '\x1b[33m', msg),
+    err: (msg: string) => out('[-]', '\x1b[31m', msg),
+    step: (msg: string) => out('[*]', '\x1b[35m', msg),
+    debug: (msg: string) => { if (verbose) console.log('[debug]', msg); },
   };
 }
 
-async function main() {
+async function main(): Promise<void> {
   const parts = parseCliArgs();
   if (parts.help) { console.log(usage()); return; }
   if (parts.selftest) { runSelftest(); return; }
@@ -125,17 +125,17 @@ async function main() {
   try {
     cfg = buildConfig(parts, __dirname);
   } catch (e) {
-    console.error('Error: ' + e.message);
-    console.error('Run `node myaie-bot.mjs --help` for usage.');
+    console.error('Error: ' + (e instanceof Error ? e.message : String(e)));
+    console.error('Run `node myaie-bot.ts --help` for usage.');
     process.exit(1);
   }
 
   const log = makeConsoleLog(cfg.verbose);
 
-  const summary = await runBot(cfg, {
-    log: (level, msg) => log[level] && log[level](msg),
+  await runBot(cfg, {
+    log: (level: LogLevel, msg: string) => { const fn = log[level]; if (fn) fn(msg); },
     stage: () => {},
-    schedule: (rows) => {
+    schedule: (rows: ScheduleRow[]) => {
       log.step('Schedule overview:');
       for (const r of rows) {
         const flag = r.url ? (r.status === 'ready' ? 'DOWNLOAD' : r.status) : r.status;
@@ -152,7 +152,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error('\nError: ' + e.message);
-  console.error('Run `node myaie-bot.mjs --help` for usage, or --selftest to verify the installation.');
+  console.error('\nError: ' + (e instanceof Error ? e.message : String(e)));
+  console.error('Run `node myaie-bot.ts --help` for usage, or --selftest to verify the installation.');
   process.exit(1);
 });

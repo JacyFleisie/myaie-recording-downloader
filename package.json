@@ -5,13 +5,14 @@
   "description": "Automates the myAIE student portal: iterates the calendar schedule for a date range and downloads past live lecture recordings using your real Chrome session.",
   "type": "module",
   "scripts": {
-    "start": "node myaie-bot.mjs",
-    "gui": "node gui-server.mjs",
-    "selftest": "node myaie-bot.mjs --selftest",
-    "help": "node myaie-bot.mjs --help",
+    "start": "node myaie-bot.ts",
+    "gui": "node gui-server.ts",
+    "selftest": "node myaie-bot.ts --selftest",
+    "help": "node myaie-bot.ts --help",
     "desktop": "electron .",
     "desktop:smoke": "electron . --smoke",
-    "desktop:build": "electron-builder --win"
+    "desktop:build": "electron-builder --win",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -20,10 +21,12 @@
     "playwright-core": "^1.49.0"
   },
   "author": "JacyFleisie <jacyreyneke3@gmail.com>",
-  "main": "electron/main.mjs",
+  "main": "electron/main.ts",
   "devDependencies": {
+    "@types/node": "^24.13.3",
     "electron": "^38.8.6",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3"
   },
   "build": {
     "appId": "com.jacyfleisie.myaie-recording-downloader",
@@ -31,11 +34,12 @@
     "files": [
       "electron/**/*",
       "public/**/*",
-      "bot-core.mjs",
-      "gui-server.mjs",
-      "myaie-bot.mjs",
+      "bot-core.ts",
+      "gui-server.ts",
+      "myaie-bot.ts",
       "yt-dlp.exe",
       "package.json",
+      "tsconfig.json",
       "node_modules/**/*"
     ],
     "asarUnpack": [

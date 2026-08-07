@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * gui-server.mjs — professional web dashboard for the myAIE downloader.
+ * gui-server.ts — professional web dashboard for the myAIE downloader.
  *
  * Serves a local dashboard on http://127.0.0.1:<port> with:
  *   - date-range + download-path + option controls
  *   - a live log of everything the bot detects and does (SSE)
  *   - a live schedule table, run/cancel, and a run summary
  *
- * The bot engine (bot-core.mjs) runs in this same process, so the live
+ * The bot engine (bot-core.ts) runs in this same process, so the live
  * feed needs no IPC. Settings persist to gui-settings.json.
+ *
+ * Exports `startServer()` so the Electron desktop app (electron/main.ts)
+ * can embed the dashboard in a native window; running this file directly
+ * (`node gui-server.ts`) still serves it as a standalone web dashboard.
  */
 
 import http from 'node:http';
@@ -17,7 +21,8 @@ import path from 'node:path';
 import { exec } from 'node:child_process';
 import { connect as netConnect } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildConfig, dateStr, runBot } from './bot-core.mjs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { buildConfig, dateStr, runBot, type Summary } from './bot-core.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -25,10 +30,23 @@ const SETTINGS_FILE = path.join(__dirname, 'gui-settings.json');
 const RUN_LOG_FILE = path.join(__dirname, 'bot-run.log');
 const HOST = '127.0.0.1';
 
+interface Settings {
+  from: string; to: string; subject: string; dir: string; max: string;
+  dryRun: boolean; headless: boolean; noAudit: boolean; fallbackRecording: boolean;
+  ytdlp: boolean; channel: string; loginTimeout: number;
+}
+
+interface RunBody {
+  from?: string; to?: string; subject?: string; max?: string; dir?: string;
+  channel?: string; executablePath?: string; apiBase?: string; loginTimeout?: string;
+  dryRun?: boolean; inspect?: boolean; headless?: boolean; noAudit?: boolean;
+  fallbackRecording?: boolean; ytdlp?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Settings (persisted between runs)
 // ---------------------------------------------------------------------------
-function defaultSettings() {
+function defaultSettings(): Settings {
   const today = new Date();
   const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90);
   return {
@@ -47,7 +65,7 @@ function defaultSettings() {
   };
 }
 
-function loadSettings() {
+function loadSettings(): Settings {
   try {
     return { ...defaultSettings(), ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
   } catch {
@@ -55,11 +73,11 @@ function loadSettings() {
   }
 }
 
-function saveSettings(settings) {
+function saveSettings(settings: Settings): void {
   try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch { /* best-effort */ }
 }
 
-function appendRunLog(line) {
+function appendRunLog(line: string): void {
   try {
     if (fs.existsSync(RUN_LOG_FILE) && fs.statSync(RUN_LOG_FILE).size > 1024 * 1024) {
       const buf = fs.readFileSync(RUN_LOG_FILE);
@@ -72,16 +90,16 @@ function appendRunLog(line) {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let settings = loadSettings();
+let settings: Settings = loadSettings();
 let state = 'idle'; // idle | running | done | error
 let cancelFlag = false;
 let statusText = 'Ready';
 
-const clients = new Set();          // SSE responses
-const eventHistory = [];            // recent events for late-joining clients
+const clients = new Set<ServerResponse>();   // SSE responses
+const eventHistory: Array<Record<string, unknown>> = []; // recent events for late-joining clients
 const MAX_HISTORY = 300;
 
-function broadcast(type, payload = {}) {
+function broadcast(type: string, payload: Record<string, unknown> = {}): void {
   const evt = { type, ts: new Date().toISOString(), ...payload };
   eventHistory.push(evt);
   if (eventHistory.length > MAX_HISTORY) eventHistory.shift();
@@ -90,17 +108,16 @@ function broadcast(type, payload = {}) {
     try { res.write(frame); } catch { clients.delete(res); }
   }
 }
-
 // ---------------------------------------------------------------------------
 // Run lifecycle
 // ---------------------------------------------------------------------------
-function startRun(body) {
+function startRun(body: RunBody): { ok: boolean; error?: string } {
   if (state === 'running') {
     return { ok: false, error: 'A run is already in progress.' };
   }
   let cfg;
   try {
-    const parts = {
+    cfg = buildConfig({
       from: body.from || settings.from,
       to: body.to || settings.to,
       subject: body.subject,
@@ -116,10 +133,9 @@ function startRun(body) {
       noAudit: body.noAudit,
       fallbackRecording: body.fallbackRecording,
       ytdlp: !!body.ytdlp,
-    };
-    cfg = buildConfig(parts, __dirname);
+    }, __dirname);
   } catch (e) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 
   // persist the user's choices for next time
@@ -148,7 +164,7 @@ function startRun(body) {
 
   void (async () => {
     try {
-      const summary = await runBot(cfg, {
+      const summary: Summary = await runBot(cfg, {
         log: (level, message) => {
           broadcast('log', { level, message });
           appendRunLog(`${level}: ${message}`);
@@ -168,9 +184,10 @@ function startRun(body) {
     } catch (e) {
       state = 'error';
       statusText = 'Error';
-      broadcast('log', { level: 'err', message: 'Run error: ' + e.message });
-      broadcast('run_error', { error: e.message });
-      appendRunLog(`run error: ${e.message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      broadcast('log', { level: 'err', message: 'Run error: ' + msg });
+      broadcast('run_error', { error: msg });
+      appendRunLog(`run error: ${msg}`);
     } finally {
       state = state === 'running' ? 'done' : state;
       broadcast('status', { state, statusText });
@@ -180,7 +197,7 @@ function startRun(body) {
   return { ok: true };
 }
 
-function handleBrowseFolder(res) {
+function handleBrowseFolder(res: ServerResponse): void {
   if (process.platform !== 'win32') {
     sendJson(res, 200, { ok: false, path: '', error: 'Native folder picker is Windows-only — type the path manually.' });
     return;
@@ -202,7 +219,7 @@ function handleBrowseFolder(res) {
   });
 }
 
-function cancelRun() {
+function cancelRun(): { ok: boolean; error?: string } {
   if (state !== 'running') return { ok: false, error: 'Nothing is running.' };
   cancelFlag = true;
   broadcast('log', { level: 'warn', message: 'Cancel requested — finishing current download, then stopping.' });
@@ -212,7 +229,7 @@ function cancelRun() {
 // ---------------------------------------------------------------------------
 // HTTP server
 // ---------------------------------------------------------------------------
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -223,7 +240,7 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-function readBody(req) {
+function readBody(req: IncomingMessage): Promise<Record<string, any>> {
   return new Promise((resolve) => {
     let data = '';
     req.on('data', (chunk) => { data += chunk; if (data.length > 1e6) req.destroy(); });
@@ -234,7 +251,7 @@ function readBody(req) {
   });
 }
 
-function sendJson(res, status, obj) {
+function sendJson(res: ServerResponse, status: number, obj: unknown): void {
   if (res.writableEnded) return;
   const body = JSON.stringify(obj);
   try {
@@ -248,7 +265,7 @@ function sendJson(res, status, obj) {
   } catch { /* client disconnected */ }
 }
 
-function serveStatic(res, pathname) {
+function serveStatic(res: ServerResponse, pathname: string): void {
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const file = path.resolve(PUBLIC_DIR, rel);
   if (!file.startsWith(PUBLIC_DIR)) { sendJson(res, 403, { error: 'Forbidden' }); return; }
@@ -263,8 +280,7 @@ function serveStatic(res, pathname) {
     res.end(data);
   });
 }
-
-function handleSse(req, res) {
+function handleSse(req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
@@ -285,8 +301,8 @@ function handleSse(req, res) {
   req.on('close', () => clients.delete(res));
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${HOST}`);
+const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const url = new URL(req.url || '/', `http://${HOST}`);
   const p = url.pathname;
 
   if (p === '/api/events') { handleSse(req, res); return; }
@@ -324,7 +340,7 @@ const heartbeat = setInterval(() => {
 // ---------------------------------------------------------------------------
 // Port selection (PORT env, else first free in 3801..3820)
 // ---------------------------------------------------------------------------
-function isPortFree(port) {
+function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = netConnect({ port, host: HOST });
     probe.once('connect', () => { probe.destroy(); resolve(false); });
@@ -332,7 +348,7 @@ function isPortFree(port) {
   });
 }
 
-async function pickPort() {
+async function pickPort(): Promise<number> {
   // Respect PORT only if it is actually free (the shell may export a PORT
   // that belongs to another app).
   if (process.env.PORT && Number(process.env.PORT) > 0 && await isPortFree(Number(process.env.PORT))) {
@@ -344,7 +360,7 @@ async function pickPort() {
   return 0; // let the OS choose
 }
 
-function openBrowser(url) {
+function openBrowser(url: string): void {
   const cmd = process.platform === 'win32'
     ? `start "" "${url}"`
     : process.platform === 'darwin'
@@ -354,19 +370,19 @@ function openBrowser(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Boot
+// Boot — shared by the CLI (`node gui-server.ts`) and the Electron app
 // ---------------------------------------------------------------------------
-// Boot — shared by the CLI (`node gui-server.mjs`) and the Electron app
-// ---------------------------------------------------------------------------
-export function getStatusSnapshot() {
+export function getStatusSnapshot(): { state: string; statusText: string; settings: Settings } {
   return { state, statusText, settings };
 }
 
-export async function startServer({ autoOpenBrowser = true } = {}) {
+export async function startServer({ autoOpenBrowser = true }: { autoOpenBrowser?: boolean } = {}): Promise<{
+  server: http.Server; port: number; url: string; close: () => Promise<void>;
+}> {
   const port = await pickPort();
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, HOST, resolve);
+    server.listen(port, HOST, () => resolve());
   });
   const url = `http://${HOST}:${port}/`;
   if (autoOpenBrowser) {
@@ -384,7 +400,7 @@ export async function startServer({ autoOpenBrowser = true } = {}) {
     server,
     port,
     url,
-    close: () => new Promise((resolve) => {
+    close: () => new Promise<void>((resolve) => {
       clearInterval(heartbeat);
       server.close(() => resolve());
     }),
@@ -395,7 +411,7 @@ export async function startServer({ autoOpenBrowser = true } = {}) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   startServer().catch((e) => {
-    console.error('Failed to start dashboard:', e.message);
+    console.error('Failed to start dashboard:', e instanceof Error ? e.message : String(e));
     process.exit(1);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) {

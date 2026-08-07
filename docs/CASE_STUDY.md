@@ -47,12 +47,12 @@ the `recordings` HTML trick, and the bot was rewritten to match reality.
 ## Architecture
 
 ```
-bot-core.mjs   — event-driven engine: browser session → fetch subjects →
+bot-core.ts   — event-driven engine: browser session → fetch subjects →
                  fetch class feeds → filter by date/subject → classify →
                  download. Emits log/stage/schedule/item/summary events and
                  supports cancellation. No UI concerns.
-myaie-bot.mjs  — CLI wrapper (all flags, --selftest).
-gui-server.mjs — zero-dependency HTTP + SSE server that runs the engine
+myaie-bot.ts  — CLI wrapper (all flags, --selftest).
+gui-server.ts — zero-dependency HTTP + SSE server that runs the engine
                  in-process and streams live events to the dashboard.
 public/        — dark-theme dashboard: date pickers, folder picker, live
                  log, schedule table with status chips, run summary.

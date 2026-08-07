@@ -14,7 +14,7 @@ Three ways to run it:
 - **`npm run gui`** — the same dashboard in your browser: date pickers, a
   download folder picker, a live log of everything the bot detects and does, a
   schedule table and a run summary.
-- **`node myaie-bot.mjs ...`** — the CLI (all flags still work).
+- **`node myaie-bot.ts ...`** — the CLI (all flags still work).
 
 Want the story behind it? Read the [case study](docs/CASE_STUDY.md).
 
@@ -83,10 +83,10 @@ appended to `bot-run.log`.
 ## CLI
 
 ```bash
-node myaie-bot.mjs --from 2026-06-01 --to 2026-07-31            # download the range
-node myaie-bot.mjs --from 2026-06-01 --subject "Networks" --dry-run   # preview
-node myaie-bot.mjs --inspect                                   # dump raw data
-node myaie-bot.mjs --selftest                                  # verify install
+node myaie-bot.ts --from 2026-06-01 --to 2026-07-31            # download the range
+node myaie-bot.ts --from 2026-06-01 --subject "Networks" --dry-run   # preview
+node myaie-bot.ts --inspect                                   # dump raw data
+node myaie-bot.ts --selftest                                  # verify install
 ```
 
 | Option | Meaning |

@@ -1,9 +1,9 @@
 /**
- * bot-core.mjs — myAIE Student Portal lecture-recording downloader (engine)
+ * bot-core.ts — myAIE Student Portal lecture-recording downloader (engine)
  *
  * Pure engine, no CLI/GUI concerns: `runBot(cfg, events)` drives the portal
  * and reports everything through event callbacks so any front end (terminal,
- * web dashboard, ...) can render a live view.
+ * web dashboard, desktop app, ...) can render a live view.
  *
  * Events (all optional):
  *   log(level, message)      level: info|ok|warn|err|step|debug
@@ -13,6 +13,9 @@
  *   item({kind, row, detail}) kind: skipped|started|downloaded|failed
  *   summary(summary)         {downloaded, skipped, failed, pending, cancelled}
  *   isCancelled()            return true to abort between steps/downloads
+ *
+ * Runs directly on Node 24+ / Electron 38+ (type stripping) — tsc is used
+ * purely as a typechecker (see `npm run typecheck`).
  */
 
 import fs from 'node:fs';
@@ -21,7 +24,65 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
+
+// ---------------------------------------------------------------------------
+// Types (derived from the portal's real JSON responses)
+// ---------------------------------------------------------------------------
+export type LogLevel = 'info' | 'ok' | 'warn' | 'err' | 'step' | 'debug';
+export type Logger = (level: LogLevel, message: string) => void;
+
+/** A class session as returned by the portal's class feed. */
+export interface ClassSession {
+  [key: string]: unknown;
+}
+
+export interface ConfigParts {
+  from?: unknown; to?: unknown; subject?: unknown; max?: unknown;
+  dir?: unknown; profile?: unknown; channel?: unknown; executablePath?: unknown;
+  apiBase?: unknown; loginTimeout?: unknown; dryRun?: unknown; inspect?: unknown;
+  headless?: unknown; noAudit?: unknown; fallbackRecording?: unknown; ytdlp?: unknown;
+  ytDlpPath?: unknown; ytDlpTimeout?: unknown; verbose?: unknown;
+}
+
+export interface RunConfig {
+  from: Date; to: Date; subject: string; max: number | null;
+  dir: string; profile: string; channel: string; executablePath?: string;
+  apiBase: string; loginTimeout: number; dryRun: boolean; inspect: boolean;
+  headless: boolean; noAudit: boolean; fallbackRecording: boolean; ytdlp: boolean;
+  ytDlpPath?: string; ytDlpTimeout: number; verbose: boolean; inspectPath: string;
+}
+
+export type RowStatus = 'not recorded' | 'recording pending' | 'ready';
+
+export interface ScheduleRow {
+  date: string; subject: string; classId: string; url: string | null; status: RowStatus;
+}
+
+export interface Summary {
+  downloaded: number; skipped: number; failed: number; pending: number;
+  cancelled?: boolean; wouldDownload?: number; dryRun?: boolean; inspect?: boolean; count?: number;
+}
+
+export interface ItemEvent {
+  kind: 'skipped' | 'started' | 'downloaded' | 'failed';
+  row: ScheduleRow; detail?: string; sizeMb?: string; method?: string;
+}
+
+export interface BotEvents {
+  log?: Logger;
+  stage?: (stage: string) => void;
+  schedule?: (rows: ScheduleRow[]) => void;
+  item?: (item: ItemEvent) => void;
+  summary?: (summary: Summary) => void;
+  isCancelled?: () => boolean;
+}
+
+export interface DownloadOk { ok: true; method: 'browser' | 'stream' | 'ytdlp'; suggested?: string; contentType?: string; browserError?: string; file?: string; ext?: string; }
+export interface DownloadFail { ok: false; error: string; }
+export type DownloadResult = DownloadOk | DownloadFail;
+
+export interface PageFetchResult { status: number; ok: boolean; json: unknown; preview: string; }
 
 // ---------------------------------------------------------------------------
 // Constants (discovered from the portal's JS bundles)
@@ -31,7 +92,7 @@ export const CALENDAR_URL = 'https://student.myaie.ac/calendar';
 export const HOME_URL = 'https://student.myaie.ac/home/';
 export const PORTAL_ORIGIN = 'https://student.myaie.ac';
 
-export const EXT_BY_MIME = {
+export const EXT_BY_MIME: Record<string, string> = {
   'video/mp4': '.mp4',
   'video/webm': '.webm',
   'video/x-matroska': '.mkv',
@@ -53,12 +114,12 @@ export const SUBJECT_KEYS = ['class_title', 'subjectName', 'subject', 'title', '
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for selftest / reuse)
 // ---------------------------------------------------------------------------
-export function dateStr(d) {
-  const p = (n) => String(n).padStart(2, '0');
+export function dateStr(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export function parseDate(s) {
+export function parseDate(s: string): Date | null {
   if (!s) return null;
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) return d;
@@ -74,7 +135,7 @@ export function parseDate(s) {
   return null;
 }
 
-export function pick(ev, keys) {
+export function pick(ev: ClassSession | null | undefined, keys: string[]): unknown {
   for (const k of keys) {
     const v = ev?.[k];
     if (v !== undefined && v !== null && v !== '') return v;
@@ -82,7 +143,7 @@ export function pick(ev, keys) {
   return undefined;
 }
 
-export function parseEventDate(ev) {
+export function parseEventDate(ev: ClassSession): Date | null {
   const raw = pick(ev, DATE_KEYS);
   if (raw === undefined) return null;
   if (typeof raw === 'number') {
@@ -97,22 +158,22 @@ export function parseEventDate(ev) {
   return null;
 }
 
-export function eventSubject(ev) {
+export function eventSubject(ev: ClassSession): string {
   const s = pick(ev, SUBJECT_KEYS);
   return s === undefined ? '' : String(s);
 }
 
-export function eventClassId(ev) {
+export function eventClassId(ev: ClassSession): string {
   const v = pick(ev, ['class_id', 'classId', 'id']);
   return v === undefined || v === null ? '' : String(v);
 }
 
-export function isRecorded(ev) {
+export function isRecorded(ev: ClassSession): boolean {
   const v = pick(ev, ['IsRecorded', 'is_recorded', 'isRecorded']);
   return v === 1 || v === '1' || v === true;
 }
 
-export function isDownloadable(ev) {
+export function isDownloadable(ev: ClassSession): boolean {
   // Class sessions expose downloadURL + isRecordingAvailable; the calendar
   // table variant uses DownloadAvailable. A missing flag means "unknown —
   // rely on the URL"; explicit 0/false/null means "not ready yet".
@@ -121,14 +182,14 @@ export function isDownloadable(ev) {
   return !(v === 0 || v === '0' || v === false || v === 'false');
 }
 
-export function looksLikeDirectMedia(url) {
+export function looksLikeDirectMedia(url: string): boolean {
   if (!url) return false;
   if (/vimeo\.com|youtube\.com|youtu\.be|player\.vimeo/i.test(url)) return false;
   if (/index\.html|playback|player/i.test(url)) return false;
   return true;
 }
 
-export function looksYtDlpSupported(url) {
+export function looksYtDlpSupported(url: unknown): boolean {
   return /vimeo\.com|youtube\.com|youtu\.be|player\.vimeo/i.test(String(url || ''));
 }
 
@@ -136,10 +197,10 @@ export function looksYtDlpSupported(url) {
 // "Download" button server-side into the `recordings` HTML as
 //   <button ... url="https://playback.myaie.ac/presentation_video/<meetingId>/video.mp4"
 //             class="... download-video" ...>
-export function extractRecordingsUrl(html) {
+export function extractRecordingsUrl(html: string): string | null {
   if (!html || typeof html !== 'string') return null;
   // 1) the Download button's url attribute
-  const btn = html.match(/<button[^>]*url\s*=\s*["']([^"']+)["'][^>]*class\s*=\s*["'][^"']*download-video/i);
+  const btn = html.match(/<button[^>]*url\s*=\s*["']([^"']+)["'][^>]*class\s*=\s*["'][^"']*\bdownload-video\b/i);
   if (btn && btn[1]) return btn[1].trim();
   // 2) any url="...mp4" attribute
   const any = html.match(/url\s*=\s*["']([^"']*\.mp4[^"']*)["']/i);
@@ -149,11 +210,11 @@ export function extractRecordingsUrl(html) {
   return href ? href[0] : null;
 }
 
-export function resolvePortalUrl(u) {
+export function resolvePortalUrl(u: string): string {
   try { return new URL(u, PORTAL_ORIGIN).toString(); } catch { return u; }
 }
 
-export function pickDownloadUrl(ev, fallbackToRecording, allowEmbed = false) {
+export function pickDownloadUrl(ev: ClassSession, fallbackToRecording: boolean, allowEmbed = false): string | null {
   const dl = pick(ev, ['downloadURL', 'downloadUrl', 'download_url']);
   if (dl) return resolvePortalUrl(String(dl));
   // No downloadURL: the Download button lives in the server-rendered recordings HTML.
@@ -177,31 +238,30 @@ export function pickDownloadUrl(ev, fallbackToRecording, allowEmbed = false) {
   return null;
 }
 
-export function shortUrl(u) {
+export function shortUrl(u: unknown): string {
   if (!u) return '';
-  try { return String(u).split('?')[0]; } catch { return u; }
+  try { return String(u).split('?')[0]; } catch { return String(u); }
 }
 
-export function sanitize(name) {
+export function sanitize(name: string): string {
   return String(name).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'unknown';
 }
 
-export function extractList(payload) {
+export function extractList(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
-  if (payload && Array.isArray(payload.data)) return payload.data;
-  if (payload && payload.data && Array.isArray(payload.data.data)) return payload.data.data;
-  if (payload && Array.isArray(payload.records)) return payload.records;
-  if (payload && Array.isArray(payload.list)) return payload.list;
-  if (payload && Array.isArray(payload.result)) return payload.result;
+  if (payload && Array.isArray((payload as { data?: unknown }).data)) return (payload as { data: unknown[] }).data;
+  if (payload && (payload as { data?: unknown }).data && Array.isArray((payload as { data: { data?: unknown } }).data.data)) return (payload as { data: { data: unknown[] } }).data.data;
+  if (payload && Array.isArray((payload as { records?: unknown }).records)) return (payload as { records: unknown[] }).records;
+  if (payload && Array.isArray((payload as { list?: unknown }).list)) return (payload as { list: unknown[] }).list;
+  if (payload && Array.isArray((payload as { result?: unknown }).result)) return (payload as { result: unknown[] }).result;
   return [];
 }
-
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-export function buildConfig(parts, baseDir = process.cwd()) {
-  const resolve = (p) => (p ? path.resolve(baseDir, String(p)) : null);
-  const parseDateOrNull = (s) => {
+export function buildConfig(parts: ConfigParts, baseDir: string = process.cwd()): RunConfig {
+  const resolve = (p: unknown) => (p ? path.resolve(baseDir, String(p)) : null);
+  const parseDateOrNull = (s: unknown): Date | null => {
     if (s === undefined || s === null || s === '') return null;
     return parseDate(String(s));
   };
@@ -212,44 +272,43 @@ export function buildConfig(parts, baseDir = process.cwd()) {
     from: parseDateOrNull(parts.from),
     to: parseDateOrNull(parts.to),
     subject: String(parts.subject || '').toLowerCase(),
-    max: parts.max === undefined || parts.max === null || parts.max === '' ? null : parseInt(parts.max, 10),
+    max: parts.max === undefined || parts.max === null || parts.max === '' ? null : parseInt(String(parts.max), 10),
     dir: resolve(parts.dir) || path.join(baseDir, 'downloads'),
     profile: resolve(parts.profile) || path.join(baseDir, 'chrome-profile'),
-    channel: parts.channel || 'chrome',
-    executablePath: parts.executablePath || undefined,
-    apiBase: parts.apiBase || DEFAULT_API_BASE,
-    loginTimeout: parts.loginTimeout ? parseInt(parts.loginTimeout, 10) : 300,
+    channel: String(parts.channel || 'chrome'),
+    executablePath: parts.executablePath ? String(parts.executablePath) : undefined,
+    apiBase: parts.apiBase ? String(parts.apiBase) : DEFAULT_API_BASE,
+    loginTimeout: parts.loginTimeout ? parseInt(String(parts.loginTimeout), 10) : 300,
     dryRun: !!parts.dryRun,
     inspect: !!parts.inspect,
     headless: !!parts.headless,
     noAudit: !!parts.noAudit,
     fallbackRecording: !!parts.fallbackRecording,
     ytdlp: !!parts.ytdlp,
-    ytDlpPath: parts.ytDlpPath || undefined,
-    ytDlpTimeout: parts.ytDlpTimeout ? parseInt(parts.ytDlpTimeout, 10) : 1200,
+    ytDlpPath: parts.ytDlpPath ? String(parts.ytDlpPath) : undefined,
+    ytDlpTimeout: parts.ytDlpTimeout ? parseInt(String(parts.ytDlpTimeout), 10) : 1200,
     verbose: !!parts.verbose,
     inspectPath: path.join(baseDir, 'calendar_dump.json'),
   };
 
-  if (fromProvided && !c.from) throw new Error(`Invalid --from date: ${parts.from} (use YYYY-MM-DD)`);
-  if (toProvided && !c.to) throw new Error(`Invalid --to date: ${parts.to} (use YYYY-MM-DD)`);
-  if (c.from && Number.isNaN(c.from.getTime())) throw new Error(`Invalid --from date: ${parts.from}`);
-  if (c.to && Number.isNaN(c.to.getTime())) throw new Error(`Invalid --to date: ${parts.to}`);
+  if (fromProvided && !c.from) throw new Error(`Invalid --from date: ${String(parts.from)} (use YYYY-MM-DD)`);
+  if (toProvided && !c.to) throw new Error(`Invalid --to date: ${String(parts.to)} (use YYYY-MM-DD)`);
+  if (c.from && Number.isNaN(c.from.getTime())) throw new Error(`Invalid --from date: ${String(parts.from)}`);
+  if (c.to && Number.isNaN(c.to.getTime())) throw new Error(`Invalid --to date: ${String(parts.to)}`);
   if (c.from && c.to && c.from.getTime() > c.to.getTime()) throw new Error('--from must be <= --to');
   if (c.max !== null && (!Number.isInteger(c.max) || c.max <= 0)) throw new Error('--max must be a positive integer');
-  if (!c.channel && !c.executablePath) c.channel = 'chrome';
 
   const now = new Date();
   if (!c.from) c.from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 90);
   if (!c.to) c.to = now;
-  return c;
+  return c as RunConfig;
 }
 
 // ---------------------------------------------------------------------------
 // Browser launch (persistent profile => login persists between runs)
 // ---------------------------------------------------------------------------
-async function launchBrowser(cfg) {
-  const options = {
+async function launchBrowser(cfg: RunConfig): Promise<{ context: BrowserContext; browser: Browser | null }> {
+  const options: Record<string, unknown> = {
     channel: cfg.channel,
     headless: cfg.headless,
     acceptDownloads: true,
@@ -262,17 +321,18 @@ async function launchBrowser(cfg) {
   }
   fs.mkdirSync(cfg.profile, { recursive: true });
   fs.mkdirSync(cfg.dir, { recursive: true });
-  fs.mkdirSync(options.downloadsPath, { recursive: true });
+  fs.mkdirSync(String(options.downloadsPath), { recursive: true });
 
-  let context;
+  let context: BrowserContext;
   try {
-    context = await chromium.launchPersistentContext(cfg.profile, options);
+    context = await chromium.launchPersistentContext(cfg.profile, options as never);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     const hint =
-      /executable doesn't exist/i.test(e.message) || /channel.*not installed/i.test(e.message)
+      /executable doesn't exist/i.test(msg) || /channel.*not installed/i.test(msg)
         ? '\n  Hint: Chrome was not found. Use --channel edge or --executable-path "C:\path\to\chrome.exe".'
         : '';
-    throw new Error('Failed to launch Chrome: ' + e.message + hint);
+    throw new Error('Failed to launch Chrome: ' + msg + hint);
   }
   return { context, browser: context.browser() };
 }
@@ -280,17 +340,17 @@ async function launchBrowser(cfg) {
 // ---------------------------------------------------------------------------
 // In-page API access (uses the session's Bearer token from localStorage)
 // ---------------------------------------------------------------------------
-async function pageFetchJson(page, apiBase, token, apiPath) {
+async function pageFetchJson(page: Page, apiBase: string, token: string, apiPath: string): Promise<PageFetchResult> {
   return page.evaluate(
-    async ({ apiBase, apiPath, token }) => {
-      const res = await fetch(apiBase + apiPath, {
+    async ({ apiBase: base, apiPath: p, token: tok }: { apiBase: string; apiPath: string; token: string }) => {
+      const res = await fetch(base + p, {
         headers: {
           Accept: 'application/json, text/plain, */*',
-          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+          ...(tok ? { Authorization: 'Bearer ' + tok } : {}),
         },
       });
       const text = await res.text();
-      let json = null;
+      let json: unknown = null;
       try { json = JSON.parse(text); } catch { /* not JSON */ }
       return { status: res.status, ok: res.ok, json, preview: text.slice(0, 400) };
     },
@@ -298,24 +358,24 @@ async function pageFetchJson(page, apiBase, token, apiPath) {
   );
 }
 
-async function getToken(page) {
+async function getToken(page: Page): Promise<string | null> {
   return page.evaluate(() => localStorage.getItem('token'));
 }
 
-async function getUserId(page) {
+async function getUserId(page: Page): Promise<string | null> {
   try {
     const raw = await page.evaluate(() => localStorage.getItem('user'));
     const u = raw ? JSON.parse(raw) : null;
-    if (u && u.id) return u.id;
+    if (u && u.id) return String(u.id);
   } catch { /* not JSON */ }
   return null;
 }
 
 // The portal keeps per-subject class feeds. Subjects come from
 // getAllSubjectCalendar; each subject's sessions (with isRecorded,
-// downloadURL, recordingURL, class_date) come from the paginated
+// recordings HTML, class_date) come from the paginated
 // getPostFeedMessagesPaginateTz feed.
-async function fetchAllClasses(page, cfg, log) {
+async function fetchAllClasses(page: Page, cfg: RunConfig, log: Logger): Promise<ClassSession[]> {
   const token = await getToken(page);
   if (!token) throw new Error('No token found in localStorage — are you logged in?');
   const userId = await getUserId(page);
@@ -330,26 +390,26 @@ async function fetchAllClasses(page, cfg, log) {
   if (!subjRes.ok) {
     throw new Error(`Calendar API returned HTTP ${subjRes.status}. Body preview: ${subjRes.preview}`);
   }
-  const subjects = extractList(subjRes.json);
+  const subjects = extractList(subjRes.json) as ClassSession[];
   if (subjects.length === 0) log('warn', 'Subject calendar returned no subjects (or an unexpected shape).');
   log('ok', `${subjects.length} subject(s) found.`);
 
-  const classes = [];
+  const classes: ClassSession[] = [];
   for (const subj of subjects) {
     const sid = pick(subj, ['id', 'subjectId', 'subject_id', 'room_id']);
     if (sid === undefined) continue;
     const sname = pick(subj, ['name', 'subjectName', 'subject', 'subject_name']) ?? sid;
-    log('info', `  fetching classes for "${sname}" ...`);
+    log('info', `  fetching classes for "${String(sname)}" ...`);
     let pageNum = 1, lastPage = 1;
     while (pageNum <= lastPage && pageNum <= 25) {
-      const feedPath = `/getPostFeedMessagesPaginateTz?page=${pageNum}&limit=50&needOnlineClass=1&room_id=${encodeURIComponent(sid)}&user_id=${encodeURIComponent(userId)}`;
+      const feedPath = `/getPostFeedMessagesPaginateTz?page=${pageNum}&limit=50&needOnlineClass=1&room_id=${encodeURIComponent(String(sid))}&user_id=${encodeURIComponent(userId)}`;
       const res = await pageFetchJson(page, cfg.apiBase, token, feedPath);
       if (!res.ok) { log('warn', `    feed page ${pageNum} failed (HTTP ${res.status})`); break; }
-      const payload = res.json || {};
-      if (Number.isInteger(payload.lastPage)) lastPage = payload.lastPage;
+      const payload = (res.json || {}) as { lastPage?: number; data?: unknown[] };
+      if (Number.isInteger(payload.lastPage)) lastPage = payload.lastPage as number;
       const items = Array.isArray(payload.data) ? payload.data : [];
       for (const it of items) {
-        const ca = it && it.ClassArray;
+        const ca = (it as { ClassArray?: ClassSession | ClassSession[] } | null)?.ClassArray;
         if (Array.isArray(ca)) classes.push(...ca);
         else if (ca) classes.push(ca);
       }
@@ -360,22 +420,23 @@ async function fetchAllClasses(page, cfg, log) {
   return classes;
 }
 
-async function fireAuditCall(page, cfg, classId) {
+async function fireAuditCall(page: Page, cfg: RunConfig, classId: string): Promise<void> {
   if (cfg.noAudit || !classId) return;
   try {
     const token = await page.evaluate(() => localStorage.getItem('token'));
-    await pageFetchJson(page, cfg.apiBase, token,
-      `/saveRecordingAction?id=${encodeURIComponent(classId)}&action=download_recording`);
+    if (token) {
+      await pageFetchJson(page, cfg.apiBase, token,
+        `/saveRecordingAction?id=${encodeURIComponent(classId)}&action=download_recording`);
+    }
   } catch { /* audit call is best-effort */ }
 }
-
 // ---------------------------------------------------------------------------
 // Downloads
 // ---------------------------------------------------------------------------
-async function downloadViaBrowser(context, url, targetPath) {
+async function downloadViaBrowser(context: BrowserContext, url: string, targetPath: string): Promise<string> {
   const page = await context.newPage();
   const dlPromise = page.waitForEvent('download', { timeout: 60000 }).catch(() => null);
-  let navErr = null;
+  let navErr: string | null = null;
   let gotResponse = false;
   try {
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -387,15 +448,15 @@ async function downloadViaBrowser(context, url, targetPath) {
       }
     }
   } catch (e) {
-    navErr = e.message; // navigation may abort when a download starts — that is fine
+    navErr = e instanceof Error ? e.message : String(e); // navigation may abort when a download starts — that is fine
   }
-  let dl = null;
+  let dl: { saveAs: (p: string) => Promise<void>; suggestedFilename: () => string } | null = null;
   if (navErr) {
     dl = await Promise.race([dlPromise, Promise.resolve(null)]); // known failure — skip waiting
   } else if (gotResponse) {
     // Page loaded fine (e.g. video plays in-tab). Give downloads a short grace
     // window, then fall back to streaming instead of stalling the full timeout.
-    dl = await Promise.race([dlPromise, new Promise((r) => setTimeout(() => r(null), 3000))]);
+    dl = await Promise.race([dlPromise, new Promise<typeof dl>((r) => setTimeout(() => r(null), 3000))]);
   } else {
     dl = await dlPromise; // navigation aborted — a download is likely on its way
   }
@@ -405,7 +466,7 @@ async function downloadViaBrowser(context, url, targetPath) {
   return dl.suggestedFilename() || '';
 }
 
-async function streamDownload(context, url, targetPath) {
+async function streamDownload(context: BrowserContext, url: string, targetPath: string): Promise<string> {
   const cookies = await context.cookies(url);
   const cookieHeader = cookies.map((ck) => `${ck.name}=${ck.value}`).join('; ');
   const resp = await fetch(url, {
@@ -417,18 +478,19 @@ async function streamDownload(context, url, targetPath) {
       Accept: '*/*',
     },
   });
-  if (!resp.ok) throw new Error('stream HTTP ' + resp.status());
+  if (!resp.ok) throw new Error('stream HTTP ' + resp.status);
   const contentType = resp.headers.get('content-type') || '';
   if (contentType.startsWith('text/html')) throw new Error('stream returned HTML, not a media file');
-  await new Promise((resolve, reject) => {
-    Readable.fromWeb(resp.body).pipe(fs.createWriteStream(targetPath))
-      .on('finish', resolve)
+  const body = resp.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>;
+  await new Promise<void>((resolve, reject) => {
+    Readable.fromWeb(body).pipe(fs.createWriteStream(targetPath))
+      .on('finish', () => resolve())
       .on('error', reject);
   });
   return contentType;
 }
 
-function ensureMediaExt(filePath, preferred) {
+function ensureMediaExt(filePath: string, preferred: string): string {
   if (!preferred) return filePath;
   const m = preferred.match(/\.[a-z0-9]{2,5}$/i);
   if (!m) return filePath;
@@ -440,8 +502,7 @@ function ensureMediaExt(filePath, preferred) {
   }
   return filePath;
 }
-
-function findExisting(dir, base) {
+function findExisting(dir: string, base: string): string | null {
   const exts = [...new Set(Object.values(EXT_BY_MIME))];
   for (const ext of exts) {
     const p = path.join(dir, base + ext);
@@ -450,19 +511,19 @@ function findExisting(dir, base) {
   return null;
 }
 
-function execFileAsync(cmd, args, opts = {}) {
+function execFileAsync(cmd: string, args: readonly string[], opts: { timeout?: number; maxBuffer?: number; windowsHide?: boolean } = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout, stderr) => {
+    execFile(cmd, [...args], { windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout, stderr) => {
       if (err) reject(new Error(String(stderr || stdout || err.message).trim().slice(0, 500)));
-      else resolve({ stdout, stderr });
+      else resolve({ stdout: String(stdout), stderr: String(stderr) });
     });
   });
 }
 
 const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-async function resolveYtDlp(cfg) {
-  const candidates = [];
+async function resolveYtDlp(cfg: RunConfig): Promise<string> {
+  const candidates: string[] = [];
   if (cfg.ytDlpPath) candidates.push(cfg.ytDlpPath);
   candidates.push(path.join(CORE_DIR, 'yt-dlp.exe'), path.join(CORE_DIR, 'yt-dlp'));
   for (const c of candidates) {
@@ -471,14 +532,14 @@ async function resolveYtDlp(cfg) {
   return 'yt-dlp'; // rely on PATH
 }
 
-async function ytDlpAvailable(cfg) {
+async function ytDlpAvailable(cfg: RunConfig): Promise<boolean> {
   try { await execFileAsync(await resolveYtDlp(cfg), ['--version'], { timeout: 15000 }); return true; }
   catch { return false; }
 }
 
 // Export the browser session's cookies (Netscape format) so yt-dlp can reach
 // embedded/private videos exactly like your logged-in browser.
-async function writeNetscapeCookies(context, url) {
+async function writeNetscapeCookies(context: BrowserContext, url: string): Promise<string | null> {
   // Sweep cookie files left behind by hard-killed runs (they hold session cookies).
   try {
     for (const f of fs.readdirSync(os.tmpdir())) {
@@ -487,21 +548,21 @@ async function writeNetscapeCookies(context, url) {
       try { if (Date.now() - fs.statSync(fp).mtimeMs > 6 * 3600 * 1000) fs.unlinkSync(fp); } catch { /* busy or gone */ }
     }
   } catch { /* temp dir unreadable */ }
-  let cookies = [];
-  try { cookies = await context.cookies(url); } catch { /* ignore */ }
+  let cookies: { domain: string; path?: string; secure?: boolean; expires: number; name: string; value: string }[] = [];
+  try { cookies = await context.cookies(url) as never; } catch { /* ignore */ }
   if (!cookies.length) return null;
   const lines = ['# Netscape HTTP Cookie File'];
   for (const c of cookies) {
     const dom = c.domain.startsWith('.') ? c.domain : '.' + c.domain;
     const exp = c.expires && c.expires > 0 ? Math.floor(c.expires) : 0;
-    lines.push([dom, 'TRUE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', exp, c.name, c.value].join('\t'));
+    lines.push([dom, 'TRUE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', exp, c.name, c.value].join('\n'));
   }
   const file = path.join(os.tmpdir(), `myaie-ytdlp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
   fs.writeFileSync(file, lines.join('\n'));
   return file;
 }
 
-async function downloadWithYtDlp(context, url, targetPath, cfg, log) {
+async function downloadWithYtDlp(context: BrowserContext, url: string, targetPath: string, cfg: RunConfig, log: Logger): Promise<DownloadResult> {
   const exe = await resolveYtDlp(cfg);
   const base = targetPath.slice(0, targetPath.length - path.extname(targetPath).length);
   const t0 = Date.now();
@@ -510,7 +571,7 @@ async function downloadWithYtDlp(context, url, targetPath, cfg, log) {
     '--retries', '5', '--fragment-retries', '5',
     '-o', base + '.%(ext)s', url,
   ];
-  let cookieFile = null;
+  let cookieFile: string | null = null;
   try {
     cookieFile = await writeNetscapeCookies(context, url);
     if (cookieFile) args.push('--cookies', cookieFile);
@@ -519,14 +580,14 @@ async function downloadWithYtDlp(context, url, targetPath, cfg, log) {
     const tail = stdout.split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join(' | ');
     if (tail) log('debug', '  yt-dlp: ' + tail);
   } catch (e) {
-    return { ok: false, error: 'yt-dlp failed: ' + e.message };
+    return { ok: false, error: 'yt-dlp failed: ' + (e instanceof Error ? e.message : String(e)) };
   } finally {
     if (cookieFile) { try { fs.unlinkSync(cookieFile); } catch { /* ignore */ } }
   }
   // locate the file yt-dlp wrote (base + real extension)
   const dir = path.dirname(base);
   const prefix = path.basename(base) + '.';
-  let best = null;
+  let best: { p: string; size: number; ext: string } | null = null;
   try {
     for (const f of fs.readdirSync(dir)) {
       if (!f.startsWith(prefix)) continue;
@@ -545,7 +606,7 @@ async function downloadWithYtDlp(context, url, targetPath, cfg, log) {
   return { ok: true, method: 'ytdlp', file: final, ext: best.ext };
 }
 
-async function downloadOne(context, url, targetPath, cfg, log) {
+async function downloadOne(context: BrowserContext, url: string, targetPath: string, cfg: RunConfig, log: Logger): Promise<DownloadResult> {
   // Embedded player pages (Vimeo/YouTube) can only be fetched with yt-dlp.
   if (cfg.ytdlp && looksYtDlpSupported(url)) {
     log('warn', '  embedded video detected — using yt-dlp ...');
@@ -557,33 +618,32 @@ async function downloadOne(context, url, targetPath, cfg, log) {
   } catch (e) {
     try {
       const ct = await streamDownload(context, url, targetPath);
-      return { ok: true, method: 'stream', contentType: ct, browserError: e.message };
+      return { ok: true, method: 'stream', contentType: ct, browserError: e instanceof Error ? e.message : String(e) };
     } catch (e2) {
       if (cfg.ytdlp && looksYtDlpSupported(url)) {
-        log('warn', `  direct download failed; trying yt-dlp ...`);
+        log('warn', '  direct download failed; trying yt-dlp ...');
         return downloadWithYtDlp(context, url, targetPath, cfg, log);
       }
-      return { ok: false, error: `${e.message} | ${e2.message}` };
+      return { ok: false, error: `${e instanceof Error ? e.message : String(e)} | ${e2 instanceof Error ? e2.message : String(e2)}` };
     }
   }
 }
-
 // ---------------------------------------------------------------------------
 // Selftest (pure logic, no browser)
 // ---------------------------------------------------------------------------
-export function runSelftest() {
-  const assert = (cond, msg) => {
+export function runSelftest(): void {
+  const assert = (cond: boolean, msg: string): void => {
     if (!cond) { console.error('SELFTEST FAIL: ' + msg); process.exitCode = 1; }
     else console.log('  ok: ' + msg);
   };
   console.log('Running selftest ...');
 
   assert(dateStr(new Date(2026, 5, 7)) === '2026-06-07', 'dateStr pads correctly');
-  assert(parseDate('2026-07-31').getMonth() === 6, 'parseDate ISO');
-  assert(parseDate('31/07/2026').getMonth() === 6, 'parseDate day-first');
-  assert(parseDate('07/31/2026').getMonth() === 6, 'parseDate month-first');
+  assert(parseDate('2026-07-31')!.getMonth() === 6, 'parseDate ISO');
+  assert(parseDate('31/07/2026')!.getMonth() === 6, 'parseDate day-first');
+  assert(parseDate('07/31/2026')!.getMonth() === 6, 'parseDate month-first');
 
-  const ev = {
+  const ev: ClassSession = {
     class_id: 123,
     class_title: 'Computer Networks',
     startDateTime: '2026-07-31T09:00:00',
@@ -591,7 +651,7 @@ export function runSelftest() {
     DownloadAvailable: 1,
     downloadURL: 'https://s3.af-south-1.amazonaws.com/x/y.mp4',
   };
-  assert(dateStr(parseEventDate(ev)) === '2026-07-31', 'parseEventDate picks startDateTime');
+  assert(dateStr(parseEventDate(ev) as Date) === '2026-07-31', 'parseEventDate picks startDateTime');
   assert(eventSubject(ev) === 'Computer Networks', 'eventSubject');
   assert(eventClassId(ev) === '123', 'eventClassId');
   assert(isRecorded(ev), 'isRecorded true for 1');
@@ -613,7 +673,7 @@ export function runSelftest() {
   assert(extractRecordingsUrl(dlHtml) === 'https://playback.myaie.ac/presentation_video/abc-123/video.mp4', 'extractRecordingsUrl from download button');
   assert(extractRecordingsUrl('<li><a class="btn btn-primary class-files">Class Files</a></li>') === null, 'extractRecordingsUrl null when watch-only');
   assert(extractRecordingsUrl('') === null, 'extractRecordingsUrl empty');
-  const feedEv = { class_date: '2026-07-05', class_title: 'OOP', class_id: 42, isRecorded: 1, isRecordingAvailable: 1, recordings: dlHtml };
+  const feedEv: ClassSession = { class_date: '2026-07-05', class_title: 'OOP', class_id: 42, isRecorded: 1, isRecordingAvailable: 1, recordings: dlHtml };
   assert(pickDownloadUrl(feedEv, false) === 'https://playback.myaie.ac/presentation_video/abc-123/video.mp4', 'pickDownloadUrl from recordings HTML');
   assert(pickDownloadUrl({ recordings: '<li><a class="btn btn-primary class-files">Files</a></li>' }, false) === null, 'no URL from watch-only HTML');
 
@@ -625,29 +685,28 @@ export function runSelftest() {
   assert(sanitize('Object Oriented Programming') === 'Object_Oriented_Programming', 'sanitize');
 
   // date-range filtering
-  const from = parseDate('2026-07-01'), to = parseDate('2026-07-31');
-  const inRange = (d) => {
+  const from = parseDate('2026-07-01') as Date, to = parseDate('2026-07-31') as Date;
+  const inRange = (d: Date): boolean => {
     const s = dateStr(d);
     return s >= dateStr(from) && s <= dateStr(to);
   };
-  assert(inRange(parseEventDate(ev)), 'event inside range');
-  assert(!inRange(parseEventDate({ startDateTime: '2026-08-01T09:00:00' })), 'event outside range');
+  assert(inRange(parseEventDate(ev) as Date), 'event inside range');
+  assert(!inRange(parseEventDate({ startDateTime: '2026-08-01T09:00:00' }) as Date), 'event outside range');
 
   if (process.exitCode) { console.error('Selftest FAILED.'); process.exit(1); }
   console.log('Selftest PASSED.');
   process.exit(0);
 }
-
 // ---------------------------------------------------------------------------
 // Main engine
 // ---------------------------------------------------------------------------
-export async function runBot(cfg, events = {}) {
-  const log = (level, msg) => events.log && events.log(level, msg);
-  const stage = (s) => events.stage && events.stage(s);
-  const emitSchedule = (rows) => events.schedule && events.schedule(rows);
-  const emitItem = (it) => events.item && events.item(it);
+export async function runBot(cfg: RunConfig, events: BotEvents = {}): Promise<Summary> {
+  const log = (level: LogLevel, message: string) => events.log && events.log(level, message);
+  const stage = (s: string) => events.stage && events.stage(s);
+  const emitSchedule = (rows: ScheduleRow[]) => events.schedule && events.schedule(rows);
+  const emitItem = (it: ItemEvent) => events.item && events.item(it);
   const isCancelled = events.isCancelled || (() => false);
-  const checkCancel = () => {
+  const checkCancel = (): boolean => {
     if (isCancelled()) { log('warn', 'Cancellation requested — stopping.'); return true; }
     return false;
   };
@@ -656,7 +715,7 @@ export async function runBot(cfg, events = {}) {
   log('info', `Run started — date range ${dateStr(cfg.from)} → ${dateStr(cfg.to)}`);
   if (cfg.subject) log('info', `Subject filter: "${cfg.subject}"`);
   log('info', `Save folder: ${cfg.dir}`);
-  log('info', `Browser: ${cfg.channel || cfg.executablePath}${cfg.headless ? ' (headless)' : ''}${cfg.dryRun ? ' (DRY RUN)' : ''}`);
+  log('info', `Browser: ${cfg.channel || cfg.executablePath || ''}${cfg.headless ? ' (headless)' : ''}${cfg.dryRun ? ' (DRY RUN)' : ''}`);
   if (cfg.ytdlp) {
     if (cfg.ytDlpPath) {
       try { if (!fs.statSync(cfg.ytDlpPath).isFile()) throw new Error('not a file'); }
@@ -668,12 +727,12 @@ export async function runBot(cfg, events = {}) {
   }
 
   const { context, browser } = await launchBrowser(cfg);
-  let page;
+  let page: Page;
   try {
     page = context.pages()[0] || (await context.newPage());
   } catch (e) {
     await context.close().catch(() => {});
-    try { await browser.close(); } catch { /* already closed */ }
+    try { await browser?.close(); } catch { /* already closed */ }
     throw e;
   }
 
@@ -687,9 +746,9 @@ export async function runBot(cfg, events = {}) {
     // ---- wait for login ----
     stage('waiting-login');
     const deadline = Date.now() + cfg.loginTimeout * 1000;
-    let token = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
+    let token: string | null = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
     while (!token && Date.now() < deadline) {
-      if (checkCancel()) return { cancelled: true };
+      if (checkCancel()) return { downloaded: 0, skipped: 0, failed: 0, pending: 0, cancelled: true };
       log('warn', 'Not logged in yet — please log in in the opened Chrome window (the bot will continue automatically).');
       await page.waitForTimeout(4000);
       token = await page.evaluate(() => localStorage.getItem('token')).catch(() => null);
@@ -704,7 +763,7 @@ export async function runBot(cfg, events = {}) {
       fs.writeFileSync(cfg.inspectPath, JSON.stringify(classesArr, null, 2));
       log('ok', `Wrote ${classesArr.length} raw class sessions to ${cfg.inspectPath}`);
       log('info', 'Inspect mode — open that file to see the exact field names, then rerun without --inspect.');
-      return { inspect: true, count: classesArr.length };
+      return { downloaded: 0, skipped: 0, failed: 0, pending: 0, inspect: true, count: classesArr.length };
     }
 
     // ---- filter by date range + subject ----
@@ -712,14 +771,14 @@ export async function runBot(cfg, events = {}) {
     const fromStr = dateStr(cfg.from), toStr = dateStr(cfg.to);
     const candidates = classesArr
       .map((ev) => ({ ev, date: parseEventDate(ev) }))
-      .filter(({ date }) => date && dateStr(date) >= fromStr && dateStr(date) <= toStr)
+      .filter((c): c is { ev: ClassSession; date: Date } => !!c.date && dateStr(c.date) >= fromStr && dateStr(c.date) <= toStr)
       .filter(({ ev }) => !cfg.subject || eventSubject(ev).toLowerCase().includes(cfg.subject))
-      .sort((a, b) => a.date - b.date);
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
 
     log('ok', `${candidates.length} class session(s) in the requested date range${cfg.subject ? ' for "' + cfg.subject + '"' : ''}.`);
 
     // ---- classify ----
-    const rows = candidates.map(({ ev, date }) => {
+    const rows: ScheduleRow[] = candidates.map(({ ev, date }) => {
       const url = pickDownloadUrl(ev, cfg.fallbackRecording, cfg.ytdlp);
       return {
         date: dateStr(date),
@@ -742,7 +801,6 @@ export async function runBot(cfg, events = {}) {
       log('warn', 'Nothing to download (no ready recordings in range).');
       return { downloaded: 0, skipped: 0, failed: 0, pending };
     }
-
     // ---- download ----
     stage('downloading');
     const budget = cfg.max ?? ready.length;
@@ -768,7 +826,7 @@ export async function runBot(cfg, events = {}) {
       emitItem({ kind: 'started', row: r });
       await fireAuditCall(page, cfg, r.classId);
 
-      const result = await downloadOne(context, r.url, target, cfg, log);
+      const result = await downloadOne(context, r.url as string, target, cfg, log);
       if (!result.ok) {
         log('err', `  FAILED: ${result.error}`);
         emitItem({ kind: 'failed', row: r, detail: result.error });
@@ -791,7 +849,8 @@ export async function runBot(cfg, events = {}) {
 
     const cancelled = checkCancel();
     stage('done');
-    const summary = { downloaded: okCount, skipped: skipCount, failed: failCount, pending, cancelled };
+    const summary: Summary = { downloaded: okCount, skipped: skipCount, failed: failCount, pending, cancelled };
+    if (events.summary) events.summary(summary);
     log('step', 'Summary:');
     log('info', `  downloaded: ${okCount}`);
     log('info', `  already present / skipped: ${skipCount}`);
@@ -801,6 +860,6 @@ export async function runBot(cfg, events = {}) {
     return summary;
   } finally {
     await context.close().catch(() => {});
-    try { await browser.close(); } catch { /* already closed */ }
+    try { await browser?.close(); } catch { /* already closed */ }
   }
 }

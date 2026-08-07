@@ -1,7 +1,7 @@
 /**
- * electron/main.mjs — desktop wrapper for the myAIE Lecture Downloader.
+ * electron/main.ts — desktop wrapper for the myAIE Lecture Downloader.
  *
- * Starts the dashboard server (gui-server.mjs) in this process and shows it
+ * Starts the dashboard server (gui-server.ts) in this process and shows it
  * in a native Electron window. The bot engine, live log, and settings all
  * live in the same process — no IPC needed.
  *
@@ -9,18 +9,20 @@
  *   npm run desktop:smoke    headless self-check (starts server, hits /api/status, exits)
  */
 import { app, BrowserWindow, shell } from 'electron';
-import { startServer } from '../gui-server.mjs';
+import { startServer } from '../gui-server.ts';
 
-let serverHandle = null;
-let mainWindow = null;
+type ServerHandle = Awaited<ReturnType<typeof startServer>>;
 
-async function startEmbeddedServer() {
+let serverHandle: ServerHandle | null = null;
+let mainWindow: BrowserWindow | null = null;
+
+async function startEmbeddedServer(): Promise<ServerHandle> {
   if (serverHandle) return serverHandle;
   serverHandle = await startServer({ autoOpenBrowser: false });
   return serverHandle;
 }
 
-function createWindow() {
+function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 920,
@@ -35,7 +37,7 @@ function createWindow() {
       sandbox: true,
     },
   });
-  mainWindow.loadURL(serverHandle.url);
+  mainWindow.loadURL((serverHandle as ServerHandle).url);
   // Open external links (e.g. the GitHub profile in the footer) in the system browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -62,13 +64,13 @@ if (!gotLock) {
       try {
         const h = await startEmbeddedServer();
         const res = await fetch(h.url + 'api/status');
-        const body = await res.json();
+        const body = (await res.json()) as { state: string };
         console.log('SMOKE OK', res.status, JSON.stringify({ state: body.state, url: h.url }));
         await h.close();
         serverHandle = null;
         app.exit(0);
       } catch (e) {
-        console.error('SMOKE FAIL', e.message);
+        console.error('SMOKE FAIL', e instanceof Error ? e.message : String(e));
         app.exit(1);
       }
       return;
@@ -86,6 +88,6 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
-    if (serverHandle) { serverHandle.close(); serverHandle = null; }
+    if (serverHandle) { void serverHandle.close(); serverHandle = null; }
   });
 }
