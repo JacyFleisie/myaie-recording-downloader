@@ -146,6 +146,11 @@ if (!gotLock) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('Failed to start:', msg);
+      if (process.argv.includes('--smoke')) {
+        // On a headless CI runner a modal dialog would hang the job — fail fast.
+        app.exit(1);
+        return;
+      }
       dialog.showErrorBox('myAIE Lecture Downloader', 'Could not start the app:\n' + msg);
       app.quit();
     }
