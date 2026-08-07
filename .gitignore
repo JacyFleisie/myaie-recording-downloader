@@ -1,0 +1,11 @@
+node_modules/
+downloads/
+chrome-profile/
+calendar_dump.json
+*.log
+gui-settings.json
+bot-run.log
+yt-dlp.exe
+
+# Freebuff workspace metadata
+.freebuff/

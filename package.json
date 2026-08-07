@@ -1,0 +1,19 @@
+{
+  "name": "myaie-recording-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automates the myAIE student portal: iterates the calendar schedule for a date range and downloads past live lecture recordings using your real Chrome session.",
+  "type": "module",
+  "scripts": {
+    "start": "node myaie-bot.mjs",
+    "gui": "node gui-server.mjs",
+    "selftest": "node myaie-bot.mjs --selftest",
+    "help": "node myaie-bot.mjs --help"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

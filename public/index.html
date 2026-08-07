@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>myAIE Lecture Downloader</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+    </div>
+    <div>
+      <h1>myAIE Lecture Downloader</h1>
+      <p class="sub">Past live lecture recordings &middot; runs in your own Chrome session</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="status-pill" id="statusPill" role="status" aria-live="polite" aria-label="Bot status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Ready</span>
+    </div>
+    <span class="conn" id="conn">connecting&hellip;</span>
+  </div>
+</header>
+
+<main class="layout" id="main">
+
+  <aside class="sidebar">
+    <section class="card">
+      <h2>Run configuration</h2>
+
+      <div class="field">
+        <label for="from">Date from</label>
+        <input type="date" id="from">
+      </div>
+      <div class="field">
+        <label for="to">Date to</label>
+        <input type="date" id="to">
+      </div>
+      <div class="presets" role="group" aria-label="Quick date ranges">
+        <button class="preset" data-days="7" aria-label="Set date range to the last 7 days">7 days</button>
+        <button class="preset" data-days="30" aria-label="Set date range to the last 30 days">30 days</button>
+        <button class="preset" data-days="90" aria-label="Set date range to the last 90 days">90 days</button>
+        <button class="preset" data-days="180" aria-label="Set date range to the last 6 months">6 months</button>
+      </div>
+
+      <div class="field">
+        <label for="subject">Subject filter <span class="opt">(optional)</span></label>
+        <input type="text" id="subject" placeholder="e.g. Computer Networks" spellcheck="false">
+      </div>
+
+      <div class="field">
+        <label for="dir">Download folder</label>
+        <div class="dir-row">
+          <input type="text" id="dir" spellcheck="false" autocomplete="off">
+          <button id="browseBtn" class="btn btn-ghost" title="Choose folder" type="button" aria-label="Choose download folder">Browse&hellip;</button>
+        </div>
+      </div>
+
+      <div class="field-inline">
+        <label class="check"><input type="checkbox" id="dryRun"> Dry run &mdash; preview only</label>
+        <label class="check"><input type="checkbox" id="headless"> Headless &mdash; no window (after first login)</label>
+        <label class="check"><input type="checkbox" id="noAudit"> Skip portal audit call</label>
+        <label class="check"><input type="checkbox" id="fallbackRecording"> Use recording URL when download is missing</label>
+        <label class="check"><input type="checkbox" id="ytdlp"> Use yt-dlp for embedded videos (Vimeo / YouTube)</label>
+      </div>
+
+      <div class="field-row">
+        <div class="field grow">
+          <label for="max">Max videos</label>
+          <input type="number" id="max" min="1" placeholder="all">
+        </div>
+        <div class="field grow">
+          <label for="channel">Browser</label>
+          <select id="channel">
+            <option value="chrome">Chrome</option>
+            <option value="msedge">Edge</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="runBtn" class="btn btn-primary" type="button" aria-label="Start download"><span class="icon">&#9654;</span> Start download</button>
+        <button id="cancelBtn" class="btn btn-danger" type="button" disabled aria-label="Stop the current run">Stop</button>
+      </div>
+    </section>
+
+    <section class="card stats-card">
+      <h2>Run summary</h2>
+      <div class="stats" aria-live="polite" aria-label="Run summary">
+        <div class="stat"><span class="stat-num ok" id="statDown">0</span><span class="stat-label">Downloaded</span></div>
+        <div class="stat"><span class="stat-num warn" id="statSkip">0</span><span class="stat-label">Skipped</span></div>
+        <div class="stat"><span class="stat-num err" id="statFail">0</span><span class="stat-label">Failed</span></div>
+        <div class="stat"><span class="stat-num info" id="statPending">0</span><span class="stat-label">Pending</span></div>
+      </div>
+    </section>
+  </aside>
+
+  <section class="content">
+    <section class="card table-card">
+      <div class="card-head">
+        <h2>Detected schedule</h2>
+        <span class="count" id="scheduleCount" aria-live="polite">no data yet</span>
+      </div>
+      <div class="table-wrap">
+        <table id="scheduleTable">
+          <caption class="sr-only">Detected schedule</caption>
+          <thead>
+            <tr><th scope="col">Date</th><th scope="col">Subject</th><th scope="col">Class ID</th><th scope="col">Recording</th></tr>
+          </thead>
+          <tbody id="scheduleBody"></tbody>
+        </table>
+        <div class="empty" id="scheduleEmpty">Run the bot to see what it detects on the calendar.</div>
+      </div>
+    </section>
+
+    <section class="card log-card">
+      <div class="card-head">
+        <h2>Live log</h2>
+        <div class="log-tools">
+          <div class="filter" id="logFilter" role="group" aria-label="Log level filter">
+            <button data-level="all" class="active" type="button" aria-pressed="true">All</button>
+            <button data-level="info" type="button" aria-pressed="false">Info</button>
+            <button data-level="warn" type="button" aria-pressed="false">Warnings</button>
+            <button data-level="err" type="button" aria-pressed="false">Errors</button>
+          </div>
+          <button id="clearLog" class="btn btn-ghost btn-sm" type="button" aria-label="Clear the live log">Clear</button>
+        </div>
+      </div>
+      <div class="log" id="logBox" aria-live="off" aria-label="Live activity log (use Tab to read it on demand)" tabindex="0"></div>
+    </section>
+  </section>
+
+</main>
+
+<div id="toast" class="toast" role="status"></div>
+<script src="/app.js"></script>
+</body>
+</html>
