@@ -47,7 +47,7 @@ you're ready.
 
 **v1.4.7**
 
-- **Upcoming-class scan fixed for real** — the portal's calendar page calls
+- **Upcoming-class scan fixed** — the portal's calendar page calls
   `getSubjectEventPageWiseTz` as a **POST with a JSON body** (confirmed by
   the page probe, which now logs the HTTP method and POST body): the full
   subject-id list, `status: "upcoming"`, and a date window. The scanner now
