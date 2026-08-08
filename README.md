@@ -35,7 +35,21 @@ you're ready.
 
 ## 📝 Changelog
 
-**v1.4.0** *(latest)*
+**v1.4.1** *(latest)*
+
+- **Upcoming-class scan now actually finds your classes** — it reads the
+  calendar's own events endpoint (`getSubjectEventPageWiseTz`), flattens its
+  date-keyed response, and **walks every page**, so the full now → 7-day
+  window is covered (not just page one).
+- **Parses the portal's split date/time fields** — `class_date_rel` +
+  `class_from_rel` (12-hour times like "8:00 am") and their end-time
+  counterparts — and skips canceled classes.
+- **Live-link recovery** — if a class has no join link in the API data, the
+  scan looks for it on the calendar page itself and matches it by class id or
+  subject; otherwise the class's fields are logged so the link can be pinned
+  down.
+
+**v1.4.0**
 
 - **Class Assistant, close-based flow** — never gives up joining (retries
   every ~20s until the class actually starts), **never clicks a Leave button**;
