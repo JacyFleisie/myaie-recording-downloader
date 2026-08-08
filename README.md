@@ -35,7 +35,13 @@ you're ready.
 
 ## 📝 Changelog
 
-**v1.4.1** *(latest)*
+**v1.4.2** *(latest)*
+
+- **Settings moved into a dedicated dialog** — a gear button in the top bar
+  opens a clean, grouped Settings window (Appearance, Notifications, Behavior,
+  Class assistant timing) instead of cluttering the sidebar.
+
+**v1.4.1**
 
 - **Upcoming-class scan now actually finds your classes** — it reads the
   calendar's own events endpoint (`getSubjectEventPageWiseTz`), flattens its
