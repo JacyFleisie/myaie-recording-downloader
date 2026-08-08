@@ -33,6 +33,37 @@ reinstalls itself without your go-ahead. When a new version is found you click
 **Download update** (with live progress), then **Restart & install** whenever
 you're ready.
 
+## 📝 Changelog
+
+**v1.4.0** *(latest)*
+
+- **Class Assistant, close-based flow** — never gives up joining (retries
+  every ~20s until the class actually starts), **never clicks a Leave button**;
+  when the class time is up it closes the tab and restarts from the clock for
+  the next class (already-started classes are joined immediately, passed
+  windows are skipped).
+- **Session-expired (HTTP 401/403) auto-recovery** — if your saved portal
+  login goes stale, the app now opens the portal so you can log in again and
+  **retries automatically** instead of failing the run.
+- **New App settings card** — dark/light theme, desktop notifications (class
+  joins/closes, finished downloads), minimize to tray (assistant keeps running
+  in the background), start with Windows, and a warning before quitting while
+  auto-attend is armed. Plus an **Export log** button on the live log.
+- **CLI assistant flags** — `--scan-upcoming`, `--auto-attend`,
+  `--join-lead <min>`, `--close-grace <min>`.
+
+**v1.3.x**
+
+- Class Assistant introduced — scan upcoming classes (now → 7 days) and
+  auto-join them, with hardened date parsing and self-diagnostics when a scan
+  finds nothing.
+
+**v1.3.0**
+
+- Updates became **fully manual** (Check for updates → Download → Restart &
+  install) — the app never closes or reinstalls itself on its own.
+- Native Windows folder picker for choosing the download folder.
+
 ## ✨ What it does
 
 - **Scans your calendar schedule** for a date range you choose (7d / 30d / 90d /
