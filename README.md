@@ -35,7 +35,71 @@ you're ready.
 
 ## 📝 Changelog
 
-**v1.4.2** *(latest)*
+**v1.4.8** *(latest)*
+
+- **Smarter scan: today's joinable classes.** The scanner no longer hunts
+  through the next 7 days. It reads the rendered calendar page and lists only
+  **today's classes whose Join button is enabled** — the ones you can actually
+  join right now. Enable Auto-join and the app runs the entry retry protocol
+  on them: it keeps retrying until you're in, holds the class, closes the tab
+  at the end, and moves on. Classes with no direct link now still get joined
+  via the fallback-URL rotation (they carry the portal's class ids).
+
+**v1.4.7**
+
+- **Upcoming-class scan fixed for real** — the portal's calendar page calls
+  `getSubjectEventPageWiseTz` as a **POST with a JSON body** (confirmed by
+  the page probe, which now logs the HTTP method and POST body): the full
+  subject-id list, `status: "upcoming"`, and a date window. The scanner now
+  makes that exact POST first. If the API still returns nothing, it falls
+  back to **reading the rendered calendar page directly** — the same
+  upcoming-class rows you see in the browser (dates, times, titles, ids) —
+  so the scan works even if the API contract changes. The scan log now also
+  prints exactly what POST was sent and what the API answered, so any
+  remaining gap is visible in one scan.
+
+**v1.4.6**
+
+- **Tray quick actions** — right-click the tray icon for a live menu:
+  *Scan upcoming classes*, a status line with the **next class and countdown**
+  (*Next: Computer Networks in 2h 14m*), **Pause / Resume** for an active
+  download run, and **Open downloads folder** — plus the tray tooltip shows
+  the next class countdown so you can glance at it while the window is hidden.
+
+**v1.4.5**
+
+- **Downloads dashboard** — a live overview of every download run: the item
+  currently downloading with a **real byte-progress bar** (stream and yt-dlp
+  paths), running totals (saved / skipped / failed / queued), and a **disk
+  meter** showing free space on the save drive with a warning when space runs
+  low. Per-row progress bars appear right in the schedule and news-room
+  tables.
+- **Pause / Resume** — pause a run between files (the current file finishes
+  first) and pick it back up whenever you're ready. The button sits next to
+  Stop and the run state shows "Paused" while waiting.
+- **Open folder** button on the dashboard — one click opens the download
+  folder in your file manager.
+
+**v1.4.4**
+
+- **Bot active attendance report** — the assistant now keeps a session log of
+  everything it did while auto-attend was armed (joined / closed / skipped /
+  failed, with times and reasons). When you switch **Auto-join** off — or a
+  session finishes on its own — the report opens automatically in its own
+  window, and you can reopen it any time from the **Attendance report** button
+  in the Class assistant card. The report shows live summary chips, a full
+  activity table, and **Export CSV** + **Print** buttons.
+
+**v1.4.3**
+
+- **Reliability hardening for auto-attend**: arming now refreshes the scan
+  first (a rescheduled, canceled or newly-added class is never missed), and
+  classes without a join link get **fallback URL patterns** built from the
+  portal's ids (portal class id / class UUID / BBB id) that the join loop
+  rotates through — so a changed live route can't cost you a class. When a
+  fallback works, the log reveals the portal's real live-link pattern.
+
+**v1.4.2**
 
 - **Settings moved into a dedicated dialog** — a gear button in the top bar
   opens a clean, grouped Settings window (Appearance, Notifications, Behavior,
