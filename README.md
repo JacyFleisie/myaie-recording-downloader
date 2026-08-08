@@ -11,9 +11,9 @@
 > A desktop app that downloads your past live **lecture recordings** from the
 > myAIE Student Portal — automatically. Pick a date range, and it works through
 > your calendar schedule, finds every recording that has a download button, and
-> saves the MP4s to a folder you choose. It can even **join and leave your live
-> classes for you** with the built-in Class Assistant. It drives **your own
-> logged-in Chrome session**, so no passwords are ever stored.
+> saves the MP4s to a folder you choose. It can even **join your live classes
+> for you** with the built-in Class Assistant. It drives **your own logged-in
+> Chrome session**, so no passwords are ever stored.
 
 ## ⬇️ Download the app
 
@@ -46,14 +46,20 @@ you're ready.
   you need alongside the recordings.
 - **Class Assistant (auto-join)** — **Scan upcoming classes** lists everything
   on your calendar from now to 7 days out, then arm **Auto-join my classes** and
-  the app opens each live class in its own tab, clicks **Join** when it starts,
-  and clicks **Leave** when it ends — on its own. See below for details.
+  the app opens each live class in its own tab, keeps retrying **Join** until
+  it's in, and closes the browser when the class time is up — on its own. See
+  below for details.
 - **Downloads the recordings** as MP4s to a folder you pick — including
   embedded Vimeo/YouTube videos (via a bundled yt-dlp with your session's
   cookies), so nothing is missed.
 - **Live dashboard** — a real-time log of everything the bot detects and does,
   a schedule table with status chips (Download ready / Recording pending /
   Saved…), and a run summary. Accessible by keyboard and screen reader.
+- **Quality-of-life settings** — a dedicated **App settings** card: dark/light
+  theme, desktop notifications (class joins/closes, finished downloads),
+  minimize-to-tray (the assistant keeps running in the background),
+  launch-at-login, and a guard that asks before quitting while auto-attend is
+  armed. There's also an **Export log** button on the live log.
 - **Resumes cleanly** — already-downloaded files are skipped on reruns, and
   your settings persist between sessions.
 - **Your login stays private** — it reuses your real Chrome profile; you log in
@@ -70,11 +76,12 @@ you're ready.
    returns file attachments (with size + subject + date). Tick and hit
    **Download files**.
 5. **Class Assistant** — hit **Scan upcoming classes** to see the next 7 days of
-   live classes, then flip on **Auto-join my classes** to have the app join and
-   leave each one for you.
+   live classes, then flip on **Auto-join my classes** to have the app join each
+   one and close the browser when its time is up.
 
 Both lists keep their checkboxes between runs, and the CLI has matching flags
-(`--scan-only`, `--select`, `--scan-files`, `--download-files`).
+(`--scan-only`, `--select`, `--scan-files`, `--download-files`, and the
+assistant's `--scan-upcoming` / `--auto-attend` — see the CLI reference).
 
 ## 🤖 Class Assistant (auto-join)
 
@@ -89,28 +96,33 @@ attendance bot:
    in order:
    - waits until each class is **join-before minutes before it starts**
      (default **2 min**, configurable),
-   - opens the class's live link in its own browser tab and clicks **Join**
-     (auto-accepting leave/end confirmation dialogs),
-   - waits until **leave-after minutes after it ends** (default **1 min**,
-     configurable),
-   - searches the page for a **Leave/Exit** button, clicks it, closes the tab,
-     and moves to the next class.
+   - opens the class's live link in its own browser tab and **keeps retrying
+     Join every ~20 seconds until it is actually in the class** — late-starting
+     classes are no problem, it never gives up early,
+   - holds the class open until **close-after minutes after its scheduled end**
+     (default **1 min**, configurable) — it **never clicks a Leave button**,
+     because classes can end early and Leave is unreliable,
+   - when the class time is up it simply **closes the browser tab**, then
+     restarts the process for the class matching the current/upcoming time and
+     date (a class already in session is joined immediately, one whose window
+     has passed is skipped) — redundant, but foolproof.
 
 You get live feedback the whole time — "Waiting — will join Computer Networks
-at 08:58", "In class — will leave at 09:31" — and each row flips to
-**Joined ✓ / Left ✓ / Skipped / Failed**.
+at 08:58", "In class — will close the tab at 09:31" — and each row flips to
+**Joined ✓ / Closed ✓ / Skipped / Failed**.
 
 **Built to handle real classes:**
 
-- If a class starts late, the bot **keeps retrying every ~20 seconds** until it
-  begins (watching for the Join button and the page's "waiting for moderator"
-  state), only giving up if the class never starts by its end time.
+- If a class starts late, the bot **keeps retrying every ~20 seconds until it
+  gets in** (watching for the Join button and the page's "waiting for
+  moderator" state), only closing the tab and moving on if the class never
+  starts by the end of its scheduled window.
 - Classes without a live link or a start time are skipped with a note.
 - Join-URL detection never mistakes a download/recording link for a live link;
   end time comes from the portal, else the session duration, else a 1-hour
   default.
-- If Join or Leave isn't found, the app **logs the buttons it actually sees on
-  the page** so the click patterns can be fine-tuned to your portal's wording.
+- If Join isn't found, the app **logs the buttons it actually sees on the page**
+  so the click patterns can be fine-tuned to your portal's wording.
 - You can't start a download run while the assistant is armed (and vice versa).
 
 **Requirements:** keep the app open (and logged in) while armed — each class
@@ -122,7 +134,7 @@ session.
 ```bash
 npm install            # install dependencies
 npm run desktop        # launch the desktop app (Electron)
-npm run gui            # …or the same dashboard in your browser
+node gui-server.ts     # …or the same dashboard in your browser
 node myaie-bot.ts --help   # …or the CLI
 ```
 
@@ -156,14 +168,15 @@ Want the full story? Read the [case study](docs/CASE_STUDY.md).
 ## 🖥️ Building the installer
 
 ```bash
-npm run desktop:build     # produces dist\myAIE Lecture Downloader Setup x.y.z.exe
+npm run dist              # produces dist\myAIE-Lecture-Downloader-Setup-x.y.z.exe
+npm run publish           # build + upload the installer to GitHub releases
 ```
 
 ## 📁 Project layout
 
 ```
-electron/main.ts     Electron desktop wrapper (native window, manual updates, folder picker)
-gui-server.ts        Zero-framework HTTP + SSE dashboard server (incl. update + auto-attend APIs)
+electron/main.ts     Electron desktop wrapper (native window, manual updates, tray, launch-at-login)
+gui-server.ts        Zero-framework HTTP + SSE dashboard server (incl. update, auto-attend, settings APIs)
 bot-core.ts          The automation engine (Playwright, download chain, auto-join engine)
 myaie-bot.ts         CLI entry point
 public/              Dashboard UI (HTML/CSS/JS, accessible)
@@ -193,9 +206,20 @@ npm run typecheck    # strict TypeScript, no build step (native type stripping)
 | `--yt-dlp-path <path>` | yt-dlp executable (default: bundled `./yt-dlp.exe`) |
 | `--channel <chrome\|edge>` | browser selection |
 | `--login-timeout <sec>` | how long to wait for manual login (default 300) |
+| `--scan-upcoming` | list upcoming classes (now → 7 days); download nothing |
+| `--auto-attend` | scan upcoming classes, then join each one (retrying until it starts) and close the tab when its time is up. Blocks until every class is handled. |
+| `--join-lead <min>` | minutes before start to click **Join** (default 2) |
+| `--close-grace <min>` | minutes after the scheduled end before closing the tab (default 1) |
 
-The Class Assistant (upcoming scan + auto-join) is available in the desktop
-dashboard; the CLI covers downloads and file scans.
+Examples:
+
+```bash
+node myaie-bot.ts --scan-upcoming
+node myaie-bot.ts --auto-attend --join-lead 3 --close-grace 2
+```
+
+The Class Assistant is available both in the desktop dashboard and through the
+CLI (`--scan-upcoming` / `--auto-attend`).
 
 ## 🛠 Troubleshooting
 
@@ -203,13 +227,16 @@ dashboard; the CLI covers downloads and file scans.
   with `--executable-path "C:\Program Files\Google\Chrome\Application\chrome.exe"`.
 - **Login timeout** → finish logging in within the window, or raise
   `--login-timeout`; your session persists in `./chrome-profile` afterwards.
-- **HTTP 401/403** → session expired; log in again in the opened browser.
+- **HTTP 401/403** → the saved session expired. The app now notices this, opens
+  the portal so you can log in again, and retries automatically — no manual
+  rerun needed. If it still fails, the login timed out; raise
+  `--login-timeout`.
 - **Download failed / 403** → the recording's signed URL may have expired; rerun
   (already-downloaded files are skipped).
 - **Scan shows 0 upcoming classes** → the log now dumps the exact fields the
   portal returned and the calendar API endpoints it calls, so the scanner can be
   wired to your portal's exact shape — paste that log to the author.
-- **Auto-join couldn't find Join/Leave** → the log prints the buttons the page
+- **Auto-join couldn't find Join** → the log prints the buttons the page
   actually shows; send it over and the click patterns get tuned to your portal.
 - **Embedded video won't download** → see the yt-dlp note in the docs; on some
   networks Vimeo/YouTube are blocked at the network level (a VPN fixes it).
