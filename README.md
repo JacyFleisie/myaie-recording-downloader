@@ -35,7 +35,46 @@ you're ready.
 
 ## 📝 Changelog
 
-**v1.4.8** *(latest)*
+**v1.5.1** *(latest)*
+
+- **News room downloader is now its own tab.** The content area has tabs —
+  **Recordings** / **Upcoming classes** / **News room files** — and the News
+  room tab is self-contained: its own **Find news room files** and
+  **Download files** buttons, plus a live chip showing the module it's
+  scanning ("Module: Computer Networks" or "All modules"). The module picker
+  from Run configuration applies to the news room scan too, and the app
+  auto-switches to the right tab when you start a scan or download.
+
+**v1.5.0**
+
+- **Module picker — no more typing.** The free-text "Subject filter" is now a
+  dropdown of **your actual modules**, fetched straight from the portal. Hit
+  **Load my modules** (opens the browser briefly, like a scan) and every module
+  you're enrolled in appears by name — pick one and the app scans/downloads
+  exactly that module, filtered by its real id instead of fuzzy text (which
+  also makes runs faster, since only that module's classes are fetched). The
+  list is cached automatically: every scan or run refreshes it, so the
+  dropdown fills itself after your first use. CLI: `--subject-id <id>`.
+
+**v1.4.9**
+
+- **Tooltips everywhere.** Every button and control now explains itself on
+  hover (or on keyboard focus): the top bar (Settings, status pill, version),
+  the date-range presets, the log filters and Export log, the update button,
+  the settings dialog, the Auto-join toggle, and the class chips in the
+  Upcoming table. Top-bar tooltips drop below the control so they never clip
+  off-screen, the tooltip bubble is readable in both dark and light themes,
+  and the checkbox tooltips now actually appear (previously the settings
+  checkboxes could show an empty bubble).
+- **Plain-language status.** Cryptic log lines are now written for people:
+  "0 upcoming classes" became "No joinable classes right now — they unlock
+  about 10 minutes before their start time", the scan summary reads "Gathered
+  14 class session(s) across 11 subject(s) — checking which are joinable
+  right now" (the technical breakdown moved to DEBUG), the Upcoming card says
+  "None right now" instead of "0 classes", and the empty tables and CLI help
+  text match the new today-only scan.
+
+**v1.4.8**
 
 - **Smarter scan: today's joinable classes.** The scanner no longer hunts
   through the next 7 days. It reads the rendered calendar page and lists only
@@ -47,7 +86,7 @@ you're ready.
 
 **v1.4.7**
 
-- **Upcoming-class scan fixed** — the portal's calendar page calls
+- **Upcoming-class scan fixed for real** — the portal's calendar page calls
   `getSubjectEventPageWiseTz` as a **POST with a JSON body** (confirmed by
   the page probe, which now logs the HTTP method and POST body): the full
   subject-id list, `status: "upcoming"`, and a date window. The scanner now
@@ -287,6 +326,64 @@ npm run dist              # produces dist\myAIE-Lecture-Downloader-Setup-x.y.z.e
 npm run publish           # build + upload the installer to GitHub releases
 ```
 
+### Code signing (removes the SmartScreen warning)
+
+Unsigned builds show Windows' **"unknown publisher"** SmartScreen warning for
+everyone who installs the app. Signing the installer kills that warning (and
+makes the auto-updater verify the publisher of each update).
+
+**It's automatic — you only need a certificate.** electron-builder signs every
+executable and the installer itself whenever these two environment variables
+are set:
+
+```bash
+# PowerShell (set once per terminal, or set them permanently under
+# System Properties → Environment Variables)
+$env:WIN_CSC_LINK = "C:\certs\myaie-signing.pfx"
+$env:WIN_CSC_KEY_PASSWORD = "your-cert-password"
+
+npm run dist   # → signed installer
+```
+
+What happens without a certificate:
+
+- `npm run dist` / `npm run publish` run a pre-build check
+  (`build/check-sign.mjs`). No credentials → it prints a warning and builds
+  **unsigned** (everything still works, minus the SmartScreen warning).
+- Credentials set but the `.pfx`/`.p12` file missing → the build **fails with
+  a clear message** instead of silently shipping an unsigned installer.
+
+**Get a certificate** (a real one costs money — no free option removes the
+warning):
+
+| Option | What it is | SmartScreen |
+|---|---|---|
+| **Self-signed** (test only) | generated on your own PC | still warns — your cert isn't trusted by Windows |
+| **OV code-signing cert** | from a CA (DigiCert, Sectigo, SSL.com, …), ~$150–300/yr | warning fades as download reputation grows |
+| **EV code-signing cert** | hardware-token bound, pricier | reputation builds immediately |
+
+**Try the whole flow with a self-signed test certificate** (validates your
+pipeline before you buy anything):
+
+```powershell
+# 1. Create a self-signed code-signing cert and export it as .pfx
+$cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=myAIE Lecture Downloader (TEST)" -CertStoreLocation Cert:\CurrentUser\My
+$pwd = ConvertTo-SecureString -String "testpass123" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath "$env:USERPROFILE\Desktop\myaie-test.pfx" -Password $pwd | Out-Null
+
+# 2. Point the build at it and rebuild
+$env:WIN_CSC_LINK = "$env:USERPROFILE\Desktop\myaie-test.pfx"
+$env:WIN_CSC_KEY_PASSWORD = "testpass123"
+npm run dist
+
+# 3. Check the signature landed
+Get-AuthenticodeSignature "dist\myAIE-Lecture-Downloader-Setup-1.5.0.exe" | Format-List Status,SignerCertificate
+```
+
+`Status: Valid` means signing works end to end. Installers signed with the
+test cert still show the SmartScreen warning (Windows doesn't trust your own
+certificate) — that's expected; only a CA-issued cert removes it.
+
 ## 📁 Project layout
 
 ```
@@ -311,6 +408,7 @@ npm run typecheck    # strict TypeScript, no build step (native type stripping)
 |---|---|
 | `--from <YYYY-MM-DD>` / `--to <YYYY-MM-DD>` | date range (default: last 90 days → today) |
 | `--subject <text>` | only sessions whose subject contains text |
+| `--subject-id <id>` | only look at the module with this id (from your portal's module list) |
 | `--max <n>` | at most n downloads this run |
 | `--dir <folder>` | save folder (default `./downloads`) |
 | `--dry-run` | list what would download; download nothing |
@@ -321,8 +419,8 @@ npm run typecheck    # strict TypeScript, no build step (native type stripping)
 | `--yt-dlp-path <path>` | yt-dlp executable (default: bundled `./yt-dlp.exe`) |
 | `--channel <chrome\|edge>` | browser selection |
 | `--login-timeout <sec>` | how long to wait for manual login (default 300) |
-| `--scan-upcoming` | list upcoming classes (now → 7 days); download nothing |
-| `--auto-attend` | scan upcoming classes, then join each one (retrying until it starts) and close the tab when its time is up. Blocks until every class is handled. |
+| `--scan-upcoming` | scan today's calendar and list the classes you can join right now; download nothing |
+| `--auto-attend` | scan today's classes, then join each one (retrying until it starts) and close the tab when its time is up. Blocks until every class is handled. |
 | `--join-lead <min>` | minutes before start to click **Join** (default 2) |
 | `--close-grace <min>` | minutes after the scheduled end before closing the tab (default 1) |
 
@@ -348,9 +446,11 @@ CLI (`--scan-upcoming` / `--auto-attend`).
   `--login-timeout`.
 - **Download failed / 403** → the recording's signed URL may have expired; rerun
   (already-downloaded files are skipped).
-- **Scan shows 0 upcoming classes** → the log now dumps the exact fields the
-  portal returned and the calendar API endpoints it calls, so the scanner can be
-  wired to your portal's exact shape — paste that log to the author.
+- **Scan shows no joinable classes** → the portal only enables a class's **Join**
+  button close to its start time, so scanning early in the day can legitimately
+  show none — scan again a few minutes before your class. If it still shows
+  nothing right before a class, the log dumps the exact fields the portal
+  returned; paste that log to the author.
 - **Auto-join couldn't find Join** → the log prints the buttons the page
   actually shows; send it over and the click patterns get tuned to your portal.
 - **Embedded video won't download** → see the yt-dlp note in the docs; on some
